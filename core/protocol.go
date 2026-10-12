@@ -43,7 +43,7 @@ func requestConfigPayload(conn net.Conn, payload string) (string, error) {
 		case "expired":
 			return "", fmt.Errorf("FATAL_AUTH: срок действия пароля истёк")
 		case "device_mismatch":
-			return "", fmt.Errorf("FATAL_AUTH: пароль привязан к другому устройству. Сбросьте привязку клиента в WDTT Plus (Деплой → Клиенты) или выдайте этому ПК отдельный пароль")
+			return "", fmt.Errorf("FATAL_AUTH: пароль привязан к другому устройству — он уже использовался, например, в WDTT Plus на телефоне или на другом компьютере. Каждому устройству нужен свой пароль: попросите владельца сервера выдать отдельный пароль или сбросить привязку (WDTT Plus → Деплой → Клиенты)")
 		case "deactivated":
 			return "", fmt.Errorf("FATAL_AUTH: доступ деактивирован владельцем сервера")
 		default:

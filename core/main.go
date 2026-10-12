@@ -326,6 +326,14 @@ func (c *Core) start() error {
 
 	startFailed = false // дальнейшая уборка логгера — на success-горутине
 
+	// Отказ сервера в доступе (пароль, привязка к устройству) не лечится
+	// повторами: сразу показываем причину и останавливаем подключение, а не
+	// ждём, пока каждый из десятков воркеров получит тот же отказ.
+	auth := newAuthControl(c.cfg.DeviceID, func(err error) {
+		c.emitError("auth", strings.TrimPrefix(err.Error(), "FATAL_AUTH: "), true)
+		c.Stop()
+	})
+
 	go func() {
 		defer close(c.events)
 		defer log.SetOutput(os.Stderr) // восстанавливаем лог в stderr
@@ -374,7 +382,7 @@ func (c *Core) start() error {
 				defer wg.Done()
 				WorkerGroup(ctx, groupID, startHashIndex, tp, peer, disp, localPort,
 					isFirstGroup, configChan, turnIPsCh, workerIds, &c.pauseFlag,
-					c.cfg.DeviceID, c.cfg.Password, stats, waitC, sigC, waitS, sigS)
+					auth, c.cfg.Password, stats, waitC, sigC, waitS, sigS)
 			}(gID, isFirst, cc, ids, g, myWaitCreds, myWaitSpawn, mySignalCreds, mySignalSpawn)
 		}
 

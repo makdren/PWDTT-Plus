@@ -50,7 +50,8 @@ func WorkerGroup(
 	turnIPsCh chan<- []string,
 	workerIDs []int,
 	pauseFlag *int32,
-	deviceID, password string,
+	auth *authControl,
+	password string,
 	stats *Stats,
 	waitCreds <-chan struct{},
 	signalCreds chan<- struct{},
@@ -269,6 +270,7 @@ func WorkerGroup(
 				}
 
 				// Передаём в RunSession конкретный адрес и креды
+				deviceID := auth.DeviceID()
 				configDelivered, sessErr := RunSession(
 					ctx, tp, peer, d, localPort,
 					getConf, cc, wid,
@@ -425,7 +427,11 @@ func WorkerGroup(
 						continue
 
 					case SessionErrorFatal:
-						// Фатальная ошибка — выходим
+						// Отказ сервера: либо повтор с ID старых версий,
+						// либо остановка всего подключения с ошибкой в окне.
+						if auth.handleFatal(sessErr.Err, deviceID) {
+							continue
+						}
 						log.Printf("[ВОРКЕР #%d] Фатальная ошибка: %v", wid, sessErr.Err)
 						return
 

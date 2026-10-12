@@ -383,7 +383,7 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 
 	// Add AllowedIPs routes via the WG interface
 	var tunnelRoutes []string
-	for _, cidr := range allowedIPs {
+	for _, cidr := range expandDefaultRoute(allowedIPs) {
 		if err := runCmdWindows("netsh", "interface", "ip", "add", "route", cidr, wgIface); err != nil {
 			logf(fmt.Sprintf("netsh add route %s failed: %v", cidr, err))
 		}
@@ -392,7 +392,43 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 	w.activeRoutes = tunnelRoutes
 
 	logf(fmt.Sprintf("Туннель %s поднят, AllowedIPs: %v", wgIface, tunnelRoutes))
+	logf("Маршруты по умолчанию: " + describeDefaultRoutes())
 	return nil
+}
+
+// expandDefaultRoute: к 0.0.0.0/0 добавляет 0.0.0.0/1 и 128.0.0.0/1 (как
+// OpenVPN def1). Более узкие маршруты главнее маршрута по умолчанию при любой
+// метрике, поэтому трафик идёт в туннель, даже если другой VPN (Happ/Xray и
+// т.п.) поставил свой 0.0.0.0/0 с метрикой 0. Исключения (/32 TURN, подсети
+// VK, сайты) уже /1 и по-прежнему идут мимо туннеля.
+func expandDefaultRoute(allowedIPs []string) []string {
+	out := append([]string(nil), allowedIPs...)
+	for _, cidr := range allowedIPs {
+		if cidr == "0.0.0.0/0" {
+			out = append(out, "0.0.0.0/1", "128.0.0.0/1")
+			break
+		}
+	}
+	return out
+}
+
+// describeDefaultRoutes — маршруты по умолчанию для лога (диагностика).
+func describeDefaultRoutes() string {
+	cmd := exec.Command("route", "print", "-4", "0.0.0.0")
+	hideWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return "не удалось получить"
+	}
+	var parts []string
+	for _, r := range parseDefaultRoutes(string(out)) {
+		name := interfaceNameByIP(r.iface)
+		if name == "" {
+			name = r.iface
+		}
+		parts = append(parts, name+" via "+r.gateway)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (w *WG) teardownWindows() {

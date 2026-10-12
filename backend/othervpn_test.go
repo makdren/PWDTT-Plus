@@ -28,3 +28,13 @@ func TestForeignDefaultRoutes(t *testing.T) {
 		t.Fatalf("only physical gateway must not warn: %+v", got)
 	}
 }
+
+func TestExpandDefaultRoute(t *testing.T) {
+	got := expandDefaultRoute([]string{"0.0.0.0/0"})
+	if len(got) != 3 || got[1] != "0.0.0.0/1" || got[2] != "128.0.0.0/1" {
+		t.Fatalf("got %v", got)
+	}
+	if got := expandDefaultRoute([]string{"10.66.66.0/24"}); len(got) != 1 {
+		t.Fatalf("split AllowedIPs must stay as is: %v", got)
+	}
+}

@@ -313,7 +313,7 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 
 	// Create wintun TUN interface
 	logf(fmt.Sprintf("Создание TUN интерфейса %q (mtu=%d)", wgIface, mtu))
-	tunDev, err := tun.CreateTUN(wgIface, mtu)
+	tunDev, err := createTUN(wgIface, mtu, logf)
 	if err != nil {
 		return fmt.Errorf("create TUN: %w", err)
 	}

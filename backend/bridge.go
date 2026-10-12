@@ -117,6 +117,9 @@ func (b *Bridge) Connect(params ConnectParams) error {
 		Listen:      normalizeListen(params.Listen),
 		TurnMode:    core.NormalizeConnectionMode(params.TurnMode, params.TurnTCP),
 		TurnSNI:     normalizeSNI(params.TurnSNI),
+		ExcludeTURN: func(ips []string) {
+			wg.ExcludeTURN(ips, func(msg string) { b.onEvent("log", "INFO", "[WG] "+msg) })
+		},
 	}
 	SetExclusions(params.Exclusions)
 

@@ -44,6 +44,7 @@ type WG struct {
 	activeDevice        *device.Device
 	activeTun           tun.Device
 	activeExcludeRoutes []string
+	turnExtra           map[string]bool // IP TURN, которые должны идти мимо туннеля
 	physGW              string // physical gateway saved during apply for restore on teardown
 
 	// macOS-specific: соединение с привилегированным helper-процессом
@@ -372,6 +373,10 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 		}
 	}
 	w.activeExcludeRoutes = excludes
+	// IP TURN групп, полученные до подъёма туннеля
+	for ip := range w.turnExtra {
+		w.addTurnRouteLocked(ip)
+	}
 	startSplitTunnel(gw, logf)
 
 	// Add AllowedIPs routes via the WG interface
@@ -401,6 +406,7 @@ func (w *WG) teardownWindowsLocked() {
 
 	// Исключения сайтов — снимаем первыми, пока шлюз известен
 	stopSplitTunnel()
+	w.turnExtra = nil
 
 	// Restore physical gateway metric (must happen BEFORE closing WG device)
 	if w.physGW != "" {
@@ -580,4 +586,52 @@ func ToHex(b64 string) string {
 
 func ParseCIDR(cidr string) (ip, mask string, err error) {
 	return parseCIDR(cidr)
+}
+
+// ExcludeTURN выводит IP TURN-серверов мимо туннеля. Ядро вызывает его для
+// каждой группы (и при обновлении учётных данных) до первой TURN-сессии.
+// Раньше мимо туннеля шли только адреса первой группы: адреса VK вне
+// vkExcludeCIDRs у остальных групп уходили в сам туннель — петля, после
+// которой интернет пропадал.
+func (w *WG) ExcludeTURN(ips []string, logf wgLogFunc) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if w.turnExtra == nil {
+		w.turnExtra = make(map[string]bool)
+	}
+	added := 0
+	for _, ip := range ips {
+		parsed := net.ParseIP(ip)
+		if parsed == nil || parsed.To4() == nil || w.turnExtra[ip] {
+			continue
+		}
+		w.turnExtra[ip] = true
+		if w.activeDevice != nil && w.physGW != "" && w.addTurnRouteLocked(ip) {
+			added++
+		}
+	}
+	if added > 0 && logf != nil {
+		logf(fmt.Sprintf("Адреса TURN мимо туннеля: +%d", added))
+	}
+}
+
+// addTurnRouteLocked: маршрут /32 через физический шлюз (под stateMu).
+func (w *WG) addTurnRouteLocked(ip string) bool {
+	if w.physGW == "" {
+		return false
+	}
+	cidr := ip + "/32"
+	for _, existing := range w.activeExcludeRoutes {
+		if existing == cidr {
+			return false
+		}
+	}
+	if err := runCmdWindows("route", "add", ip, "mask", "255.255.255.255", w.physGW); err != nil {
+		return false
+	}
+	w.activeExcludeRoutes = append(w.activeExcludeRoutes, cidr)
+	return true
 }

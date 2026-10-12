@@ -67,6 +67,7 @@ type Config struct {
 	TurnTCP     bool     // использовать TCP транспорт (устар., см. TurnMode)
 	TurnMode    string   // режим «Подключение»: udp или stream (TCP/TLS)
 	TurnSNI     string   // внешний SNI для TURN/TLS ("" — без подмены)
+	ExcludeTURN func(ips []string) // вывести IP TURN мимо туннеля; вызывается до первой сессии группы
 }
 
 // ═══════════════════════════════════════════════════
@@ -243,6 +244,7 @@ func (c *Core) start() error {
 		WrapKey:      wrapKey,
 		ObfsMode:     c.cfg.ObfsMode,
 		TCPTransport: c.cfg.TurnTCP,
+		excludeTURN:  c.cfg.ExcludeTURN,
 		conn:         newConnectionPolicy(NormalizeConnectionMode(c.cfg.TurnMode, c.cfg.TurnTCP), c.cfg.TurnSNI),
 		allocateGate: c.allocateGate,
 	}

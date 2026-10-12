@@ -128,6 +128,11 @@ func WorkerGroup(
 		if err != nil {
 			return err
 		}
+		// Адреса TURN этой группы выводим мимо туннеля ДО первой сессии:
+		// иначе после подъёма VPN пакеты к ним уйдут в сам туннель (петля).
+		if tp.excludeTURN != nil {
+			tp.excludeTURN(turnIPsFor(urls, tp))
+		}
 		credsMu.Lock()
 		curUser, curPass, curURLs = u, p, urls
 		credsMu.Unlock()
@@ -153,40 +158,12 @@ func WorkerGroup(
 	log.Printf("[ГРУППА #%d] Креды OK, TURN: %v, %d воркеров", groupID, curURLs, len(workerIDs))
 	credsMu.RUnlock()
 
-	// Отправляем TURN IP для exclude routes (только первая группа)
+	// TURN IP первой группы уходят в Apply вместе с конфигом (exclude routes).
 	if groupID == 1 && turnIPsCh != nil {
 		credsMu.RLock()
-		urls := cloneStringSlice(curURLs)
+		unique := turnIPsFor(curURLs, tp)
 		credsMu.RUnlock()
-		if len(urls) > 0 {
-			var turnIPs []string
-			for _, url := range urls {
-				plain, _ := splitTURNAddress(url)
-				host, _, err := net.SplitHostPort(plain)
-				if err != nil {
-					host = plain
-				}
-				if tp.Host != "" {
-					host = tp.Host
-				}
-				resolved, err := net.LookupIP(host)
-				if err != nil {
-					turnIPs = append(turnIPs, host)
-				} else {
-					for _, ip := range resolved {
-						turnIPs = append(turnIPs, ip.String())
-					}
-				}
-			}
-			// Дедупликация
-			seen := make(map[string]bool)
-			var unique []string
-			for _, ip := range turnIPs {
-				if !seen[ip] {
-					seen[ip] = true
-					unique = append(unique, ip)
-				}
-			}
+		if len(unique) > 0 {
 			select {
 			case turnIPsCh <- unique:
 			default:
@@ -559,5 +536,39 @@ type TurnParams struct {
 	ObfsMode     string
 	TCPTransport bool
 	conn         *connectionPolicy
+	excludeTURN  func(ips []string) // вывести IP TURN мимо туннеля (синхронно)
 	allocateGate *allocationGate
+}
+
+// turnIPsFor резолвит адреса TURN в IP (без повторов).
+func turnIPsFor(urls []string, tp *TurnParams) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, url := range urls {
+		plain, _ := splitTURNAddress(url)
+		host, _, err := net.SplitHostPort(plain)
+		if err != nil {
+			host = plain
+		}
+		if tp != nil && tp.Host != "" {
+			host = tp.Host
+		}
+		var ips []string
+		if ip := net.ParseIP(host); ip != nil {
+			ips = []string{ip.String()}
+		} else if resolved, err := net.LookupIP(host); err == nil {
+			for _, ip := range resolved {
+				ips = append(ips, ip.String())
+			}
+		} else {
+			ips = []string{host}
+		}
+		for _, ip := range ips {
+			if !seen[ip] {
+				seen[ip] = true
+				out = append(out, ip)
+			}
+		}
+	}
+	return out
 }

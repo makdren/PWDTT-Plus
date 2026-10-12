@@ -260,3 +260,17 @@ func NewTestStore(t interface{ TempDir() string; Setenv(string, string) }) *Stor
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, ".config"))
 	return NewStore()
 }
+
+// MachineDeviceID — постоянный идентификатор этого компьютера для сервера.
+// Раньше при пустом ID из интерфейса подставлялось "unknown", и все ПК с
+// PWDTT были для сервера одним устройством: общий ключ WireGuard, общий
+// адрес и общий канал — ответы сервера уходили на чужой компьютер.
+func (s *Store) MachineDeviceID() string {
+	settings := s.LoadSettings()
+	if settings.DeviceID != "" {
+		return settings.DeviceID
+	}
+	settings.DeviceID = "pwdtt-" + uuid.New().String()
+	_ = s.SaveSettings(settings)
+	return settings.DeviceID
+}

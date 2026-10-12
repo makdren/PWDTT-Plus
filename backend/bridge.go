@@ -100,9 +100,13 @@ func (b *Bridge) Connect(params ConnectParams) error {
 	}
 
 	deviceID := params.DeviceID
+	if deviceID == "" && b.store != nil {
+		deviceID = b.store.MachineDeviceID()
+	}
 	if deviceID == "" {
 		deviceID = "unknown"
 	}
+	log.Printf("[BRIDGE] ID устройства: %s", deviceID)
 
 	cfg := core.Config{
 		PeerAddr:    params.PeerAddr,

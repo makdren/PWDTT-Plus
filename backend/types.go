@@ -39,4 +39,5 @@ type AppSettings struct {
 	ObfsAccepted bool   `json:"obfsAccepted"` // пользователь принял предупреждение об обфускации
 	TurnTCP      bool   `json:"turnTcp"`      // использовать TCP транспорт
 	LinkHandlerOff bool `json:"linkHandlerOff"` // пользователь отключил открытие ссылок wdtt://
+	DeviceID       string `json:"deviceId"`       // постоянный ID этого компьютера для сервера
 }

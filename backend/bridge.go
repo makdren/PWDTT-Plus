@@ -115,7 +115,8 @@ func (b *Bridge) Connect(params ConnectParams) error {
 		Fingerprint: params.Fingerprint,
 		TurnTCP:     params.TurnTCP,
 		Listen:      normalizeListen(params.Listen),
-		TurnMode:    core.NormalizeTransportMode(params.TurnMode, params.TurnTCP),
+		TurnMode:    core.NormalizeConnectionMode(params.TurnMode, params.TurnTCP),
+		TurnSNI:     normalizeSNI(params.TurnSNI),
 	}
 	SetExclusions(params.Exclusions)
 
@@ -284,4 +285,14 @@ func normalizeListen(v string) string {
 		return ""
 	}
 	return "127.0.0.1:" + port
+}
+
+// normalizeSNI — неверный SNI не ломает подключение: идём без подмены.
+func normalizeSNI(v string) string {
+	sni, err := core.NormalizeFrontSNI(v)
+	if err != nil {
+		log.Printf("[TURN] Внешний SNI %q неверен (%v) — без подмены SNI", v, err)
+		return ""
+	}
+	return sni
 }

@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { IconSettings2, IconX, IconHeartFilled, IconBug, IconAlertTriangle, IconChevronRight } from '@tabler/icons-react';
 import { settingsStore } from '../lib/store';
-import type { AppSettings, TurnMode } from '../lib/types';
+import type { AppSettings } from '../lib/types';
 import Exclusions from './Exclusions';
+import Connection from './Connection';
+import { connectionModeTitle } from '../lib/utils/connection';
 import { SetAutoStart, GetAutoStart, GetVersion, GenerateReport, GetObfsAccepted, SetObfsAccepted, SetObfsMode, IsLinkHandlerRegistered, SetLinkHandler, CheckUpdateManual } from '../../wailsjs/go/backend/App';
 import { BrowserOpenURL, EventsEmit } from '../../wailsjs/runtime/runtime';
 import { logStore } from '../lib/stores/logStore';
@@ -30,6 +32,7 @@ export default function Settings({ onClose }: Props) {
 
   const [linkHandler, setLinkHandler] = useState(false);
   const [showExclusions, setShowExclusions] = useState(false);
+  const [showConnection, setShowConnection] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   const checkUpdate = async () => {
@@ -76,7 +79,7 @@ export default function Settings({ onClose }: Props) {
     })));
     const mode = settings.obfsMode || 'audio';
     const accepted = settings.obfsAccepted ? 'да' : 'нет';
-    const transport = settings.turnMode.toUpperCase();
+    const transport = connectionModeTitle(settings.turnMode) + (settings.turnSni ? ` (SNI ${settings.turnSni})` : '');
     const full = report + `\n## Settings\n- Obfuscation: ${mode}\n- Obfs accepted: ${accepted}\n- Transport: ${transport}\n`;
     await navigator.clipboard.writeText(full);
     setCopiedReport(true);
@@ -145,13 +148,12 @@ export default function Settings({ onClose }: Props) {
             </div>
           </div>
 
-          <div className="st-row">
-            <span title="Авто: сравнивает UDP и TCP при подключении и выбирает лучший">Транспорт TURN</span>
-            <div className="st-segment">
-              {([['auto', 'Авто'], ['udp', 'UDP'], ['tcp', 'TCP']] as [TurnMode, string][]).map(([mode, label]) => (
-                <button key={mode} type="button" className={`st-seg-btn${settings.turnMode === mode ? ' st-seg-btn--active' : ''}`} onClick={() => { update('turnMode', mode); update('turnTcp', mode === 'tcp'); }}>{label}</button>
-              ))}
-            </div>
+          <div className="st-row" style={{ cursor: 'pointer' }} onClick={() => setShowConnection(true)}>
+            <span>Подключение</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-4)' }}>
+              {connectionModeTitle(settings.turnMode)}
+              <IconChevronRight size={16} />
+            </span>
           </div>
 
           <div className="st-row" style={{ cursor: 'pointer' }} onClick={() => setShowExclusions(true)}>
@@ -205,6 +207,9 @@ export default function Settings({ onClose }: Props) {
             </div>
           </div>
         </div>
+      )}
+      {showConnection && (
+        <Connection onClose={() => { setShowConnection(false); setSettings(settingsStore.get()); }} />
       )}
       {showExclusions && (
         <Exclusions onClose={() => { setShowExclusions(false); setSettings(settingsStore.get()); }} />

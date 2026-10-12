@@ -80,4 +80,4 @@ func (b *TurnBlacklist) GetBanned() []string {
 }
 
 // TTL = 5 минут
-var GlobalBlacklist = NewTurnBlacklist(5 * time.Minute)
+var GlobalBlacklist = NewTurnBlacklist(time.Minute)

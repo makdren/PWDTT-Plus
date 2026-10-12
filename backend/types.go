@@ -13,7 +13,8 @@ type ConnectParams struct {
 	TurnTCP     bool     `json:"turnTcp,omitempty"`     // использовать TCP транспорт
 	Listen      string   `json:"listen,omitempty"`      // локальный адрес (порт local из ссылки WDTT-Plus)
 	MaxWorkers  int      `json:"maxWorkers,omitempty"`  // предел мощности от владельца сервера (max_workers)
-	TurnMode    string   `json:"turnMode,omitempty"`    // auto/udp/tcp — транспорт до TURN
+	TurnMode    string   `json:"turnMode,omitempty"`    // «Подключение»: udp или stream (TCP/TLS)
+	TurnSNI     string   `json:"turnSni,omitempty"`     // внешний SNI для TURN/TLS
 	Exclusions  []string `json:"exclusions,omitempty"`  // сайты/IP/подсети мимо туннеля
 }
 

@@ -18,7 +18,7 @@ const (
 	maxAttemptsPerAddress = 3
 
 	// sleepWhenAllBanned — сколько спим, если все адреса забанены
-	sleepWhenAllBanned = 60 * time.Second
+	sleepWhenAllBanned = 15 * time.Second
 
 	// sleepAfterAddressDead — спим после того как адрес умер (перед переходом к следующему)
 	sleepAfterAddressDead = 500 * time.Millisecond
@@ -160,9 +160,10 @@ func WorkerGroup(
 		if len(urls) > 0 {
 			var turnIPs []string
 			for _, url := range urls {
-				host, _, err := net.SplitHostPort(url)
+				plain, _ := splitTURNAddress(url)
+				host, _, err := net.SplitHostPort(plain)
 				if err != nil {
-					host = url
+					host = plain
 				}
 				if tp.Host != "" {
 					host = tp.Host
@@ -262,6 +263,8 @@ func WorkerGroup(
 
 				// Spread workers deterministically over relays and advance after a
 				// failed relay instead of converging on urls[0].
+				// UDP-режим — обычные адреса; TCP/TLS — сначала адреса turns:.
+				urls = tp.conn.filterURLs(urls, GlobalBlacklist.IsBanned)
 				turnAddr, ok := selectTurnURL(urls, wid, relayOffset, GlobalBlacklist.IsBanned)
 				if !ok {
 					log.Printf("[ВОРКЕР #%d] Все TURN-адреса забанены (всего %d), спим %v",
@@ -316,7 +319,7 @@ func WorkerGroup(
 
 					case SessionErrorAddressDead:
 						// Адрес мёртв — баним и пробуем следующий
-						if sessErr.Address != "" && !tp.selector.Probing() {
+						if sessErr.Address != "" {
 							GlobalBlacklist.Ban(sessErr.Address)
 							log.Printf("[ВОРКЕР #%d] TURN-адрес %s забанен на 5 минут", wid, sessErr.Address)
 						}
@@ -350,7 +353,7 @@ func WorkerGroup(
 
 						// Если слишком много попыток на одном адресе — баним его
 						if addressAttempts >= maxAttemptsPerAddress {
-							if sessErr.Address != "" && !tp.selector.Probing() {
+							if sessErr.Address != "" {
 								GlobalBlacklist.Ban(sessErr.Address)
 								log.Printf("[ВОРКЕР #%d] TURN-адрес %s забанен после %d попыток",
 									wid, sessErr.Address, addressAttempts)
@@ -527,6 +530,6 @@ type TurnParams struct {
 	WrapKey      []byte
 	ObfsMode     string
 	TCPTransport bool
-	selector     *transportSelector
+	conn         *connectionPolicy
 	allocateGate *allocationGate
 }

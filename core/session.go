@@ -33,6 +33,9 @@ const (
 	// Они нужны только против вечной блокировки, поэтому обновляем их
 	// не на каждом пакете, а не чаще раза в deadlineRefresh.
 	deadlineRefresh = time.Minute
+	// Рукопожатие через обёртку WRAP: как в WDTT Plus, не держим слот
+	// очереди рукопожатий дольше 8 с.
+	wrapHandshakeTimeout = 8 * time.Second
 )
 
 var handshakeSem = make(chan struct{}, 3)
@@ -41,27 +44,42 @@ type connectedUDPConn struct{ *net.UDPConn }
 
 func (c *connectedUDPConn) WriteTo(p []byte, _ net.Addr) (int, error) { return c.Write(p) }
 
-func dialTURNConn(turnAddr string, tcp bool) (net.PacketConn, error) {
-	if !tcp {
-		resolved, err := net.ResolveUDPAddr("udp", turnAddr)
-		if err != nil {
-			return nil, fmt.Errorf("резолв TURN: %w", err)
+// dialTURNConn открывает соединение до TURN выбранным транспортом.
+// host — настоящее имя/адрес TURN из ответа VK (для проверки TLS).
+func dialTURNConn(turnAddr, transport, host, frontSNI string, splitFirst bool) (net.PacketConn, error) {
+	switch transport {
+	case TransportTLS:
+		dialer := &tls.Dialer{
+			NetDialer: &net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second},
+			Config:    turnTLSConfig(host, frontSNI),
 		}
-		c, err := net.DialUDP("udp", nil, resolved)
+		c, err := dialer.Dial("tcp", turnAddr)
 		if err != nil {
-			return nil, fmt.Errorf("подключение TURN UDP: %w", err)
+			return nil, fmt.Errorf("подключение TURN TLS: %w", err)
 		}
-		_ = c.SetReadBuffer(socketBufSize)
-		_ = c.SetWriteBuffer(socketBufSize)
-		return &connectedUDPConn{c}, nil
+		return turn.NewSTUNConn(c), nil
+	case TransportTCP:
+		d := net.Dialer{Timeout: 6 * time.Second, KeepAlive: 30 * time.Second}
+		c, err := d.Dial("tcp", turnAddr)
+		if err != nil {
+			return nil, fmt.Errorf("подключение TURN TCP: %w", err)
+		}
+		if splitFirst {
+			c = &splitFirstWriteConn{Conn: c, splitAt: 6, delay: 20 * time.Millisecond}
+		}
+		return turn.NewSTUNConn(c), nil
 	}
-
-	d := net.Dialer{Timeout: 10 * time.Second}
-	c, err := d.Dial("tcp", turnAddr)
+	resolved, err := net.ResolveUDPAddr("udp", turnAddr)
 	if err != nil {
-		return nil, fmt.Errorf("подключение TURN TCP: %w", err)
+		return nil, fmt.Errorf("резолв TURN: %w", err)
 	}
-	return turn.NewSTUNConn(c), nil
+	c, err := net.DialUDP("udp", nil, resolved)
+	if err != nil {
+		return nil, fmt.Errorf("подключение TURN UDP: %w", err)
+	}
+	_ = c.SetReadBuffer(socketBufSize)
+	_ = c.SetWriteBuffer(socketBufSize)
+	return &connectedUDPConn{c}, nil
 }
 
 // SessionErrorType — тип ошибки сессии
@@ -120,25 +138,27 @@ func RunSession(
 ) (_ bool, sessErr *SessionError) {
 	configDelivered := false
 
-	// Транспорт до TURN выбирается на каждую сессию (UDP/TCP/авто).
-	transport := tp.selector.Pick(sessionID)
-	useTCP := transport == TransportTCP
-	setupStart := time.Now()
-	// Успех транспорта — первые данные от VPS по этой сессии, а не голое
-	// DTLS-рукопожатие: по TCP рукопожатие может пройти, а данные — нет.
+	// Транспорт до TURN — по режиму «Подключение» (UDP или TCP/TLS).
+	transport := tp.conn.transportFor(turnAddr)
+	// Рабочей сессия считается, когда по ней пришли данные с VPS, а не
+	// после голого DTLS-рукопожатия.
 	var serverReplied atomic.Bool
 	markReplied := func() {
 		if serverReplied.CompareAndSwap(false, true) {
-			tp.selector.Report(transport, true, time.Since(setupStart))
+			tp.conn.sessionUp(transport)
 		}
 	}
 	defer func() {
-		if ctx.Err() != nil || serverReplied.Load() || sessErr == nil {
+		if serverReplied.Load() {
+			tp.conn.sessionDown(transport)
+			return
+		}
+		if ctx.Err() != nil || sessErr == nil || transport != TransportUDP {
 			return
 		}
 		switch sessErr.Type {
 		case SessionErrorAddressDead, SessionErrorWrapTimeout, SessionErrorRetry:
-			tp.selector.Report(transport, false, 0)
+			tp.conn.udpFailed()
 		}
 	}()
 	var firstWireRead atomic.Bool
@@ -150,7 +170,8 @@ func RunSession(
 		}
 	}
 
-	urlhost, urlport, err := net.SplitHostPort(turnAddr)
+	plainAddr, _ := splitTURNAddress(turnAddr)
+	urlhost, urlport, err := net.SplitHostPort(plainAddr)
 	if err != nil {
 		return false, &SessionError{
 			Type:    SessionErrorAddressDead,
@@ -165,8 +186,9 @@ func RunSession(
 		urlport = tp.Port
 	}
 	turnAddrResolved := net.JoinHostPort(urlhost, urlport)
+	realHost, _, _ := net.SplitHostPort(plainAddr)
 
-	turnConn, err := dialTURNConn(turnAddrResolved, useTCP)
+	turnConn, err := dialTURNConn(turnAddrResolved, transport, realHost, tp.conn.frontSNI(), tp.conn.splitFirstWrite())
 	if err != nil {
 		return false, &SessionError{
 			Type:    SessionErrorAddressDead,
@@ -176,11 +198,7 @@ func RunSession(
 	}
 	defer turnConn.Close()
 
-	if useTCP {
-		log.Printf("[СЕССИЯ #%d] TURN TCP (%s)", sessionID, turnAddr)
-	} else {
-		log.Printf("[СЕССИЯ #%d] TURN UDP (%s)", sessionID, turnAddr)
-	}
+	log.Printf("[СЕССИЯ #%d] TURN %s (%s)", sessionID, strings.ToUpper(transport), plainAddr)
 
 	var addrFamily turn.RequestedAddressFamily
 	if peer.IP.To4() != nil {
@@ -445,7 +463,11 @@ func RunSession(
 	}
 	defer dtlsConn.Close()
 
-	hctx, hcancel := context.WithTimeout(sessCtx, 20*time.Second)
+	handshakeTimeout := 20 * time.Second
+	if useWrap {
+		handshakeTimeout = wrapHandshakeTimeout
+	}
+	hctx, hcancel := context.WithTimeout(sessCtx, handshakeTimeout)
 	log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
 	err = dtlsConn.HandshakeContext(hctx)
 	hcancel()

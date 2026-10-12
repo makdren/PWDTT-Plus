@@ -65,7 +65,8 @@ type Config struct {
 	ObfsMode    string   // audio/video
 	Fingerprint string   // chrome/android/ios/safari/firefox
 	TurnTCP     bool     // использовать TCP транспорт (устар., см. TurnMode)
-	TurnMode    string   // auto/udp/tcp
+	TurnMode    string   // режим «Подключение»: udp или stream (TCP/TLS)
+	TurnSNI     string   // внешний SNI для TURN/TLS ("" — без подмены)
 }
 
 // ═══════════════════════════════════════════════════
@@ -242,7 +243,7 @@ func (c *Core) start() error {
 		WrapKey:      wrapKey,
 		ObfsMode:     c.cfg.ObfsMode,
 		TCPTransport: c.cfg.TurnTCP,
-		selector:     newTransportSelector(NormalizeTransportMode(c.cfg.TurnMode, c.cfg.TurnTCP)),
+		conn:         newConnectionPolicy(NormalizeConnectionMode(c.cfg.TurnMode, c.cfg.TurnTCP), c.cfg.TurnSNI),
 		allocateGate: c.allocateGate,
 	}
 

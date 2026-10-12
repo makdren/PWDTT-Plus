@@ -18,10 +18,12 @@ export interface AppSettings {
   obfsAccepted: boolean;
   turnTcp: boolean;
   turnMode: TurnMode;
+  turnSni: string;
   exclusions: string[];
 }
 
-export type TurnMode = 'auto' | 'udp' | 'tcp';
+// «Подключение» как в WDTT Plus: UDP (запасной TCP/TLS) или только TCP/TLS.
+export type TurnMode = 'udp' | 'stream';
 
 export type TunnelState = 'idle' | 'connecting' | 'connected' | 'disconnecting';
 
@@ -30,6 +32,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   obfsMode: 'audio',
   obfsAccepted: false,
   turnTcp: false,
-  turnMode: 'auto',
+  turnMode: 'udp',
+  turnSni: '',
   exclusions: [],
 };

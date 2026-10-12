@@ -22,7 +22,7 @@ describe('settingsStore', () => {
   });
 
   it('save → get: roundtrip', () => {
-    const custom = { autoStart: false, obfsMode: 'video' as const, obfsAccepted: true, turnTcp: false, turnMode: 'udp' as const, exclusions: ['example.com'] };
+    const custom = { autoStart: false, obfsMode: 'video' as const, obfsAccepted: true, turnTcp: false, turnMode: 'udp' as const, turnSni: '', exclusions: ['example.com'] };
     settingsStore.save(custom);
     
     // Перезагружаем "приложение" — должны восстановиться кастомные настройки
@@ -41,8 +41,8 @@ describe('settingsStore', () => {
   });
 
   it('должен сбрасывать obfsMode на audio, если obfsAccepted === false', () => {
-    settingsStore.save({ autoStart: false, obfsMode: 'audio', obfsAccepted: false, turnTcp: false, turnMode: 'auto', exclusions: [] });
-    settingsStore.save({ autoStart: true, obfsMode: 'video', obfsAccepted: true, turnTcp: false, turnMode: 'auto', exclusions: [] });
+    settingsStore.save({ autoStart: false, obfsMode: 'audio', obfsAccepted: false, turnTcp: false, turnMode: 'udp', turnSni: '', exclusions: [] });
+    settingsStore.save({ autoStart: true, obfsMode: 'video', obfsAccepted: true, turnTcp: false, turnMode: 'udp', turnSni: '', exclusions: [] });
 
     const settings = settingsStore.get();
     expect(settings.autoStart).toBe(true);
@@ -64,8 +64,8 @@ describe('settingsStore', () => {
   });
 
   it('save: перезаписывает предыдущие', () => {
-    settingsStore.save({ autoStart: false, obfsMode: 'audio', obfsAccepted: false, turnTcp: false, turnMode: 'auto', exclusions: [] });
-    settingsStore.save({ autoStart: true, obfsMode: 'video', obfsAccepted: true, turnTcp: false, turnMode: 'auto', exclusions: [] });
+    settingsStore.save({ autoStart: false, obfsMode: 'audio', obfsAccepted: false, turnTcp: false, turnMode: 'udp', turnSni: '', exclusions: [] });
+    settingsStore.save({ autoStart: true, obfsMode: 'video', obfsAccepted: true, turnTcp: false, turnMode: 'udp', turnSni: '', exclusions: [] });
 
     const settings = settingsStore.get();
     expect(settings.autoStart).toBe(true);

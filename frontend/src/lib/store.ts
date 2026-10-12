@@ -41,7 +41,11 @@ export const settingsStore = {
     const saved = parse<Partial<AppSettings>>(SETTINGS_KEY, {});
     const merged = { ...DEFAULT_SETTINGS, ...saved };
     // Старые настройки: явный выбор TCP сохраняем, иначе — автовыбор.
-    if (!saved.turnMode) merged.turnMode = saved.turnTcp ? 'tcp' : 'auto';
+    // Старые значения: auto/udp → UDP, tcp → TCP/TLS.
+    const legacy = saved.turnMode as string | undefined;
+    if (legacy === 'tcp' || (!legacy && saved.turnTcp)) merged.turnMode = 'stream';
+    else if (legacy !== 'stream') merged.turnMode = 'udp';
+    if (typeof merged.turnSni !== 'string') merged.turnSni = '';
     if (!Array.isArray(merged.exclusions)) merged.exclusions = [];
     if (!merged.obfsAccepted) merged.obfsMode = 'audio';
     return merged;

@@ -13,6 +13,7 @@ export namespace backend {
 	    listen?: string;
 	    maxWorkers?: number;
 	    turnMode?: string;
+	    turnSni?: string;
 	    exclusions?: string[];
 	
 	    static createFrom(source: any = {}) {
@@ -33,6 +34,7 @@ export namespace backend {
 	        this.listen = source["listen"];
 	        this.maxWorkers = source["maxWorkers"];
 	        this.turnMode = source["turnMode"];
+	        this.turnSni = source["turnSni"];
 	        this.exclusions = source["exclusions"];
 	    }
 	}

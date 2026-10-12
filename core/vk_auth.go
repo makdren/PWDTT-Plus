@@ -636,8 +636,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		if !ok {
 			continue
 		}
-		clean := strings.Split(urlStr, "?")[0]
-		address := strings.TrimPrefix(strings.TrimPrefix(clean, "turn:"), "turns:")
+		address := turnAddressFromURL(urlStr)
 		addresses = append(addresses, address)
 	}
 

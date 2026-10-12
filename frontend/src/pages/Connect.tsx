@@ -375,8 +375,9 @@ export default function Connect() {
         workers,
         captchaMode: 'auto',
         obfsMode: settingsStore.get().obfsMode || 'audio',
-        turnTcp: settingsStore.get().turnMode === 'tcp',
+        turnTcp: settingsStore.get().turnMode === 'stream',
         turnMode: settingsStore.get().turnMode,
+        turnSni: settingsStore.get().turnSni,
         exclusions: settingsStore.get().exclusions,
       });
     } catch (e: unknown) {

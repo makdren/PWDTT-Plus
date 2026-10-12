@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Другой VPN, поднятый одновременно с PWDTT Plus (Happ/Xray, Outline,
+// Другой VPN, поднятый одновременно с RWDTT (Happ/Xray, Outline,
 // WireGuard и т.п.), ставит свой маршрут по умолчанию. Если его метрика
 // ниже, весь трафик уходит в чужой туннель: потоки PWDTT подключены, а через
 // сам туннель не проходит ни байта. Находим такие маршруты, чтобы сразу
@@ -32,7 +32,7 @@ func parseDefaultRoutes(out string) []defaultRoute {
 }
 
 // foreignDefaultRoutes — маршруты по умолчанию, не принадлежащие ни
-// физическому шлюзу, ни туннелю PWDTT Plus (ownIP).
+// физическому шлюзу, ни туннелю RWDTT (ownIP).
 func foreignDefaultRoutes(routes []defaultRoute, physGW, ownIP string) []defaultRoute {
 	var out []defaultRoute
 	for _, r := range routes {
@@ -62,7 +62,7 @@ func interfaceNameByIP(ip string) string {
 }
 
 // OtherVPNs возвращает имена интерфейсов чужих VPN с маршрутом по умолчанию.
-// ownCIDR — адрес туннеля PWDTT Plus из конфига ("10.66.66.4/32").
+// ownCIDR — адрес туннеля RWDTT из конфига ("10.66.66.4/32").
 func OtherVPNs(physGW, ownCIDR string) []string {
 	if runtime.GOOS != "windows" {
 		return nil

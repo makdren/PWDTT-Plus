@@ -154,7 +154,7 @@ func (a *App) SetObfsAccepted(v bool) error {
 	return a.store.SaveSettings(settings)
 }
 
-// CheckUpdate проверяет релизы PWDTT Plus на GitHub (UpdateRepo).
+// CheckUpdate проверяет релизы RWDTT на GitHub (UpdateRepo).
 func (a *App) CheckUpdate() *UpdateInfo {
 	info, err := CheckUpdate(Version)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -60,6 +61,8 @@ func runFakeEngine(t *testing.T, exe []byte, opts engineOptions, stopAfterConfig
 			}
 			run.events = append(run.events, ev)
 			if stopAfterConfig && ev.Type == core.EventStats {
+				e.NetworkChanged(true)
+				time.Sleep(200 * time.Millisecond)
 				e.Stop()
 			}
 		case <-timeout:
@@ -101,6 +104,14 @@ func TestWDTTEngineConfigCaptchaStatsStop(t *testing.T) {
 	for _, ev := range run.events {
 		captcha = captcha || strings.Contains(ev.Message, "answer=CAPTCHA_RESULT|1-1|error:unsupported")
 		stop = stop || strings.Contains(ev.Message, "Команда STOP")
+	}
+	var wake, netChange bool
+	for _, ev := range run.events {
+		wake = wake || strings.Contains(ev.Message, "got DEVICE_WAKE")
+		netChange = netChange || strings.Contains(ev.Message, "got CONNECTION_NETWORK")
+	}
+	if !wake || !netChange {
+		t.Fatalf("network notification not delivered: wake=%v network=%v", wake, netChange)
 	}
 	if !captcha || !stop {
 		t.Fatalf("captcha answered=%v stop delivered=%v", captcha, stop)
@@ -177,4 +188,45 @@ func TestWDTTEngineRestartsAfterClientExit(t *testing.T) {
 	if !restarted {
 		t.Fatal("restart was not logged")
 	}
+}
+
+func TestDefaultGateways(t *testing.T) {
+	out := `
+IPv4 Route Table
+Active Routes:
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0      192.168.0.1    192.168.0.102  10034
+          0.0.0.0          0.0.0.0         On-link        10.66.66.5    257
+          0.0.0.0        128.0.0.0         On-link        10.66.66.5    257
+Persistent Routes:
+          0.0.0.0          0.0.0.0      192.168.0.1  Default
+`
+	if got := defaultGateways(out); !reflect.DeepEqual(got, []string{"gw=192.168.0.1"}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestWindowsExcludesKeepTunnelDNS(t *testing.T) {
+	ex := strings.Join(windowsExcludeCIDRs(), " ")
+	for _, bad := range []string{"1.1.1.0/24", "8.8.8.0/24"} {
+		if strings.Contains(ex, bad) {
+			t.Fatalf("%s must go through the tunnel: %s", bad, ex)
+		}
+	}
+	for _, want := range []string{"77.88.0.0/18", "90.156.0.0/16", "193.203.40.0/22", "91.231.132.0/22"} {
+		if !strings.Contains(ex, want) {
+			t.Fatalf("%s must bypass the tunnel: %s", want, ex)
+		}
+	}
+}
+
+func TestNetworkFingerprintStable(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows only")
+	}
+	a, b := networkFingerprint("10.66.66.5/32"), networkFingerprint("10.66.66.5/32")
+	if a == "" || a != b {
+		t.Fatalf("fingerprint unstable or empty: %q vs %q", a, b)
+	}
+	t.Log(a)
 }

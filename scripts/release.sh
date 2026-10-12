@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Выпуск новой версии PWDTT Plus: проверки → тег → push.
+# Выпуск новой версии RWDTT: проверки → тег → push.
 # Сборку и публикацию релиза делает GitHub Actions (.github/workflows/release.yml),
 # приложение подхватит его через «Проверить обновления».
 #
@@ -31,7 +31,7 @@ go test ./backend/ ./tests/
 
 echo "== Публикация $TAG"
 git push origin HEAD:main
-git tag -a "$TAG" -m "PWDTT Plus $TAG"
+git tag -a "$TAG" -m "RWDTT $TAG"
 git push origin "$TAG"
 
 echo "Тег отправлен: сборка https://github.com/makdren/PWDTT-Plus/actions"

@@ -1,9 +1,9 @@
 package backend
 
-// Транспорт WDTT Plus: PWDTT Plus запускает официальный клиент WDTT Plus
+// Транспорт WDTT Plus: RWDTT запускает официальный клиент WDTT Plus
 // (go_client из github.com/Ivan4537/WDTT-Plus) отдельным процессом — так же,
 // как это делает приложение WDTT Plus на Android. Соединение, потоки, капча
-// и скорость — ровно как в WDTT Plus; PWDTT отвечает за окно, туннель
+// и скорость — ровно как в WDTT Plus; RWDTT отвечает за окно, туннель
 // WireGuard в Windows, маршруты и исключения.
 //
 // Протокол с процессом (как у Android-приложения):
@@ -191,6 +191,7 @@ func (e *wdttEngine) launch(deviceID string) error {
 	e.proc = cmd.Process
 	e.mismatch = false
 	e.started = time.Now()
+	raisePriority(cmd.Process)
 	stoppedNow := e.stopped
 	e.mu.Unlock()
 	if stoppedNow {
@@ -232,7 +233,7 @@ func (e *wdttEngine) exited(deviceID string, err error) {
 		return
 	}
 	if mismatch && deviceID != legacyDeviceID {
-		e.logLine("INFO", "[ЯДРО] Пароль привязан к другому ID устройства — пробую ID старых версий PWDTT")
+		e.logLine("INFO", "[ЯДРО] Пароль привязан к другому ID устройства — пробую ID старых версий приложения")
 		e.mu.Lock()
 		e.fatalMsg = ""
 		e.mu.Unlock()
@@ -300,7 +301,17 @@ func (e *wdttEngine) Stop() {
 	}
 }
 
-// SolveCaptcha нужен для интерфейса движка: окна капчи в PWDTT нет, ответ
+// NetworkChanged — как у Android-приложения WDTT Plus: после сна клиент
+// сразу проверяет каналы (DEVICE_WAKE), после смены сети заново ищет путь,
+// снова пробуя UDP (CONNECTION_NETWORK). Живые потоки не трогаются.
+func (e *wdttEngine) NetworkChanged(resumed bool) {
+	if resumed {
+		e.send("DEVICE_WAKE")
+	}
+	e.send("CONNECTION_NETWORK")
+}
+
+// SolveCaptcha нужен для интерфейса движка: окна капчи в RWDTT нет, ответ
 // на запрос клиента отправляется сразу (см. handleLine).
 func (e *wdttEngine) SolveCaptcha(string) {}
 
@@ -477,12 +488,11 @@ func deviceInfoJSON(appVersion string) string {
 		host = "Windows PC"
 	}
 	data, _ := json.Marshal(map[string]any{
-		"name":            host + " (PWDTT Plus)",
+		"name":            host + " (RWDTT)",
 		"manufacturer":    "PC",
 		"model":           "Windows",
 		"android_version": "",
-		"app_version":     "PWDTT Plus " + appVersion,
+		"app_version":     "RWDTT " + appVersion,
 	})
 	return string(data)
 }
-

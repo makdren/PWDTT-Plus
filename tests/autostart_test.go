@@ -35,8 +35,8 @@ func TestSetAutoStartLinux_Create(t *testing.T) {
 	if !strings.Contains(content, "Type=Application") {
 		t.Error("missing Type=Application")
 	}
-	if !strings.Contains(content, "Name=PWDTT") {
-		t.Error("missing Name=PWDTT")
+	if !strings.Contains(content, "Name=RWDTT") {
+		t.Error("missing Name=RWDTT")
 	}
 	if !strings.Contains(content, "X-GNOME-Autostart-enabled=true") {
 		t.Error("missing X-GNOME-Autostart-enabled=true")

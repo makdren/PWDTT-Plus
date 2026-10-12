@@ -123,7 +123,7 @@ export default function Settings({ onClose }: Props) {
 
           <div className="st-row">
             <span>Открывать ссылки wdtt://</span>
-            <button type="button" className={`st-toggle st-toggle--${linkHandler ? 'on' : 'off'}`} aria-label={linkHandler ? 'Не открывать ссылки wdtt:// в PWDTT' : 'Открывать ссылки wdtt:// в PWDTT'} onClick={() => {
+            <button type="button" className={`st-toggle st-toggle--${linkHandler ? 'on' : 'off'}`} aria-label={linkHandler ? 'Не открывать ссылки wdtt:// в RWDTT' : 'Открывать ссылки wdtt:// в RWDTT'} onClick={() => {
               const next = !linkHandler;
               SetLinkHandler(next)
                 .then(() => setLinkHandler(next))
@@ -165,7 +165,7 @@ export default function Settings({ onClose }: Props) {
           </div>
 
           <div className="st-info">
-            <div className="st-info-name">PWDTT Plus</div>
+            <div className="st-info-name">RWDTT</div>
             <div className="st-info-ver">v{version}</div>
             <button type="button" className="st-action" style={{ marginTop: 8 }} onClick={checkUpdate} disabled={checkingUpdate}>
               {checkingUpdate ? 'Проверка…' : 'Проверить обновления'}
@@ -179,7 +179,7 @@ export default function Settings({ onClose }: Props) {
             </button>
           </div>
 
-          <button type="button" className="st-donate" onClick={() => BrowserOpenURL('https://pay.cloudtips.ru/p/1ea077ba')}>
+          <button type="button" className="st-donate" onClick={() => BrowserOpenURL('https://yookassa.ru/my/i/as0gj4BjS84N/l')}>
             <IconHeartFilled size={16} />
             Поддержать проект
           </button>

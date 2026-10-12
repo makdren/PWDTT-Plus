@@ -113,6 +113,28 @@ var vkExcludeCIDRs = []string{
 	"77.88.0.0/18", "8.8.8.0/24", "1.1.1.0/24",
 }
 
+// Подсети TURN-серверов VK, замеченные в логах: новые адреса TURN после
+// обновления кредов клиент WDTT Plus не печатает до подключения, и без этого
+// списка первые пакеты к ним уходили бы в сам туннель.
+var vkTURNCIDRs = []string{"91.231.132.0/22", "193.203.40.0/22"}
+
+// publicDNSCIDRs нужны только прежнему ядру PWDTT (его DNS-запросы при
+// получении кредов). Клиент WDTT Plus ходит через DNS Яндекса (77.88.0.0/18),
+// а 1.1.1.1 обычно DNS туннеля из конфига сервера — мимо туннеля его
+// пускать нельзя: провайдер видит и подменяет ответы.
+var publicDNSCIDRs = map[string]bool{"8.8.8.0/24": true, "1.1.1.0/24": true}
+
+// windowsExcludeCIDRs — что идёт мимо туннеля на Windows (клиент WDTT Plus).
+func windowsExcludeCIDRs() []string {
+	var out []string
+	for _, cidr := range vkExcludeCIDRs {
+		if !publicDNSCIDRs[cidr] {
+			out = append(out, cidr)
+		}
+	}
+	return append(out, vkTURNCIDRs...)
+}
+
 func parseWGConfig(conf string) (addr, mtu string, allowedIPs []string, wgConf string) {
 	var out strings.Builder
 	scanner := bufio.NewScanner(strings.NewReader(conf))
@@ -397,7 +419,7 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 		for _, ip := range turnIPs {
 			excludes = append(excludes, ip+"/32")
 		}
-		excludes = append(excludes, vkExcludeCIDRs...)
+		excludes = append(excludes, windowsExcludeCIDRs()...)
 		for _, cidr := range excludes {
 			ip, mask, err := parseCIDR(cidr)
 			if err != nil {
@@ -848,4 +870,15 @@ func (w *WG) Active() bool {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
 	return w.activeDevice != nil
+}
+
+// TurnExtraIPs — адреса TURN, выведенные из туннеля в этой сессии.
+func (w *WG) TurnExtraIPs() []string {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	out := make([]string, 0, len(w.turnExtra))
+	for ip := range w.turnExtra {
+		out = append(out, ip)
+	}
+	return out
 }

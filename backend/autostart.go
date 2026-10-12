@@ -77,7 +77,7 @@ func setAutoStartLinux(v bool) error {
 		return nil
 	}
 	os.MkdirAll(dir, 0o755)
-	content := fmt.Sprintf("[Desktop Entry]\nType=Application\nName=PWDTT\nExec=%s\nX-GNOME-Autostart-enabled=true\n", execPath)
+	content := fmt.Sprintf("[Desktop Entry]\nType=Application\nName=RWDTT\nExec=%s\nX-GNOME-Autostart-enabled=true\n", execPath)
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
@@ -87,6 +87,7 @@ func setAutoStartWindows(v bool) error {
 		return err
 	}
 	
+	// Имя задачи прежнее: смена оставила бы у пользователей старую задачу.
 	taskName := "PWDTT_AutoStart"
 	
 	if !v {

@@ -65,6 +65,9 @@ func main() {
 		log.Printf("[СТАТИСТИКА] Активных: 9 | ↓1.50 МБ / ↑0.25 МБ")
 	}
 	for in.Scan() {
+		if c := in.Text(); c == "DEVICE_WAKE" || c == "CONNECTION_NETWORK" {
+			log.Printf("[STDIN] got %s", c)
+		}
 		if in.Text() == "STOP" {
 			log.Printf("[STDIN] Команда STOP")
 			return

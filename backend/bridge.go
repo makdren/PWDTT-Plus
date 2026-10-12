@@ -22,15 +22,16 @@ type tunnelEngine interface {
 
 // Bridge — мост между App.go и ядром.
 type Bridge struct {
-	ctx     context.Context
-	store   *Store
-	onEvent func(name string, args ...any)
-	mu      sync.Mutex
-	core    tunnelEngine
-	running bool
-	logFile *LogFile // полный лог сессии
-	session uint64   // номер сессии; stale forwardEvents не должен трогать новую
-	wgConf  string   // применённый конфиг WireGuard текущей сессии
+	ctx      context.Context
+	store    *Store
+	onEvent  func(name string, args ...any)
+	mu       sync.Mutex
+	core     tunnelEngine
+	running  bool
+	logFile  *LogFile // полный лог сессии
+	session  uint64   // номер сессии; stale forwardEvents не должен трогать новую
+	wgConf   string   // применённый конфиг WireGuard текущей сессии
+	netWatch bool     // запущено слежение за сном и сменой сети
 
 	// Логи в окно уходят пачками: каждый EventsEmit — это вызов скрипта в
 	// WebView2, а при переподключении десятков воркеров строк сотни.
@@ -83,6 +84,7 @@ func (b *Bridge) Connect(params ConnectParams) error {
 	// Сразу помечаем как running чтобы заблокировать параллельные вызовы
 	b.running = true
 	b.wgConf = ""
+	b.netWatch = false
 	b.session++
 	sessID := b.session
 	b.mu.Unlock()
@@ -265,6 +267,13 @@ func (b *Bridge) forwardEvents(events <-chan core.Event, sessID uint64) {
 					b.onEvent("state_changed", "connected")
 					// Через 5 и 20 секунд: диагностика в лог, чужой VPN, рукопожатие.
 					go b.watchTunnel(sessID, wgLogf)
+					b.mu.Lock()
+					startWatch := !b.netWatch
+					b.netWatch = true
+					b.mu.Unlock()
+					if startWatch {
+						go b.watchNetwork(sessID, wgLogf)
+					}
 				}
 			case "captcha_required":
 				b.onEvent("captcha_required", ev.Data)
@@ -353,12 +362,12 @@ func (b *Bridge) watchTunnel(sessID uint64, logf func(string)) {
 			warnedVPN = true
 			logf("Обнаружен другой VPN: " + strings.Join(others, ", "))
 			b.onEvent("error", "Работает другой VPN ("+strings.Join(others, ", ")+
-				") — он перехватывает трафик, и интернет через PWDTT Plus не пойдёт. Отключите его и переподключитесь.")
+				") — он перехватывает трафик, и интернет через RWDTT не пойдёт. Отключите его и переподключитесь.")
 		}
 		if i == 1 && !wg.Handshaked() {
 			logf("WireGuard не получил ответа сервера за 20 с")
 			b.onEvent("error", "Сервер не отвечает на рукопожатие WireGuard: потоки подключены, но трафик не идёт. "+
-				"Проверьте, что этот пароль не используется сейчас на другом компьютере с PWDTT, и переподключитесь.")
+				"Проверьте, что этот пароль не используется сейчас на другом компьютере с RWDTT, и переподключитесь.")
 		}
 	}
 }

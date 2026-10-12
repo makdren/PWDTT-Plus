@@ -51,7 +51,7 @@ func githubGet(url string) (*http.Response, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "PWDTT-Plus/"+Version)
+	req.Header.Set("User-Agent", "RWDTT/"+Version)
 	return updateHTTP.Do(req)
 }
 

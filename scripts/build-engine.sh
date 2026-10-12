@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Собирает клиент WDTT Plus (go_client из github.com/Ivan4537/WDTT-Plus) для
-# Windows в assets/wdtt-client.exe — его встраивает PWDTT Plus.
+# Windows в assets/wdtt-client.exe — его встраивает RWDTT.
 # Версия WDTT Plus закреплена в engine/WDTT_PLUS_REF; обновить:
 #   echo <commit> > engine/WDTT_PLUS_REF && scripts/build-engine.sh
 set -euo pipefail

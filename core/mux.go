@@ -82,8 +82,8 @@ func waitServerMode(ctx context.Context, timeout time.Duration) int32 {
 // muxDeviceInfo — описание устройства для панели владельца сервера WDTT-Plus.
 func muxDeviceInfo() string {
 	info := map[string]string{
-		"name":        "PWDTT Plus (" + runtime.GOOS + ")",
-		"app_version": "pwdtt-plus",
+		"name":        "RWDTT (" + runtime.GOOS + ")",
+		"app_version": "rwdtt",
 		"abi":         runtime.GOARCH,
 	}
 	data, _ := json.Marshal(info)

@@ -120,7 +120,7 @@ func downloadFile(url, dst string, expectedSize int64, progress func(int)) (stri
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "PWDTT-Plus/"+Version)
+	req.Header.Set("User-Agent", "RWDTT/"+Version)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("скачивание: %w", err)

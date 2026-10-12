@@ -52,7 +52,7 @@ func (a *authControl) handleFatal(err error, usedID string) bool {
 		a.legacyTried = true
 		a.id = legacyDeviceID
 		a.mu.Unlock()
-		log.Printf("[ЯДРО] Пароль привязан к другому ID устройства — пробую ID старых версий PWDTT")
+		log.Printf("[ЯДРО] Пароль привязан к другому ID устройства — пробую ID старых версий приложения")
 		return true
 	}
 	a.mu.Unlock()

@@ -58,7 +58,7 @@ func (a *App) IsLinkHandlerRegistered() bool {
 	return linkHandlerRegistered()
 }
 
-// SetLinkHandler включает/выключает открытие ссылок wdtt:// и qwdtt:// в PWDTT.
+// SetLinkHandler включает/выключает открытие ссылок wdtt:// и qwdtt:// в RWDTT.
 func (a *App) SetLinkHandler(enabled bool) error {
 	settings := a.store.LoadSettings()
 	settings.LinkHandlerOff = !enabled

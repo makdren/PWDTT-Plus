@@ -237,6 +237,13 @@ func (b *Bridge) forwardEvents(events <-chan core.Event, sessID uint64) {
 				} else {
 					b.onEvent("log", "INFO", "[WG] Конфиг применён, туннель активен")
 					b.onEvent("state_changed", "connected")
+					// Чужой VPN с маршрутом по умолчанию забирает весь трафик себе.
+					if others := OtherVPNs(wg.TunnelAddrs()); len(others) > 0 {
+						msg := "Работает другой VPN (" + strings.Join(others, ", ") +
+							") — он перехватывает трафик, и интернет через PWDTT Plus не пойдёт. Отключите его и переподключитесь."
+						wgLogf("Обнаружен другой VPN: " + strings.Join(others, ", "))
+						b.onEvent("error", msg)
+					}
 				}
 			case "captcha_required":
 				b.onEvent("captcha_required", ev.Data)

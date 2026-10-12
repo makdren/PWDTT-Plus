@@ -45,6 +45,7 @@ type WG struct {
 	activeTun           tun.Device
 	activeExcludeRoutes []string
 	turnExtra           map[string]bool // IP TURN, которые должны идти мимо туннеля
+	ownAddr             string          // адрес туннеля из конфига (для поиска чужих VPN)
 	physGW              string // physical gateway saved during apply for restore on teardown
 
 	// macOS-specific: соединение с привилегированным helper-процессом
@@ -301,6 +302,7 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 	if addr == "" {
 		return fmt.Errorf("Address not found in wg config")
 	}
+	w.ownAddr = addr
 
 	mtu := 1300
 	if mtuStr != "" {
@@ -634,4 +636,11 @@ func (w *WG) addTurnRouteLocked(ip string) bool {
 	}
 	w.activeExcludeRoutes = append(w.activeExcludeRoutes, cidr)
 	return true
+}
+
+// TunnelAddrs — физический шлюз и адрес туннеля текущего подключения.
+func (w *WG) TunnelAddrs() (physGW, ownAddr string) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	return w.physGW, w.ownAddr
 }

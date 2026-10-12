@@ -45,6 +45,10 @@ jobs:
       - name: Backend tests
         run: go test ./backend/ ./tests/
 
+      - name: Build WDTT Plus client
+        shell: bash
+        run: bash scripts/build-engine.sh
+
       - name: Build
         run: wails build -platform windows/amd64 -clean -o pwdtt-plus-windows-amd64.exe -ldflags "-X pwdtt/backend.Version=${{ steps.ver.outputs.version }}"
 

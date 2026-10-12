@@ -13,16 +13,24 @@ import (
 	core "wg-turn-client"
 )
 
+// tunnelEngine — запущенный транспорт: клиент WDTT Plus на Windows или
+// встроенное ядро на других системах.
+type tunnelEngine interface {
+	Stop()
+	SolveCaptcha(token string)
+}
+
 // Bridge — мост между App.go и ядром.
 type Bridge struct {
 	ctx     context.Context
 	store   *Store
 	onEvent func(name string, args ...any)
 	mu      sync.Mutex
-	core    *core.Core
+	core    tunnelEngine
 	running bool
 	logFile *LogFile // полный лог сессии
 	session uint64   // номер сессии; stale forwardEvents не должен трогать новую
+	wgConf  string   // применённый конфиг WireGuard текущей сессии
 
 	// Логи в окно уходят пачками: каждый EventsEmit — это вызов скрипта в
 	// WebView2, а при переподключении десятков воркеров строк сотни.
@@ -74,6 +82,7 @@ func (b *Bridge) Connect(params ConnectParams) error {
 	}
 	// Сразу помечаем как running чтобы заблокировать параллельные вызовы
 	b.running = true
+	b.wgConf = ""
 	b.session++
 	sessID := b.session
 	b.mu.Unlock()
@@ -127,27 +136,25 @@ func (b *Bridge) Connect(params ConnectParams) error {
 	}
 	SetExclusions(params.Exclusions)
 
-	c := core.New(cfg)
-	
 	b.mu.Lock()
-	b.core = c
 	b.logFile = b.store.OpenLogFile()
 	b.mu.Unlock()
 
-	events, err := c.Start()
+	c, events, err := startTunnelEngine(b.store, cfg)
 	if err != nil {
 		log.Printf("[BRIDGE] core start failed: %v", err)
-		c.Stop() // на всякий случай гасим контекст ядра
 		b.mu.Lock()
-		b.core = nil
 		if b.logFile != nil {
 			b.logFile.Close()
 			b.logFile = nil
 		}
 		b.running = false
 		b.mu.Unlock()
-		return fmt.Errorf("core start: %w", err)
+		return fmt.Errorf("запуск подключения: %w", err)
 	}
+	b.mu.Lock()
+	b.core = c
+	b.mu.Unlock()
 
 	go b.forwardEvents(events, sessID)
 	return nil
@@ -236,7 +243,22 @@ func (b *Bridge) forwardEvents(events <-chan core.Event, sessID uint64) {
 					}
 					b.mu.Unlock()
 				}
-				if err := wg.Apply(ev.Data, ev.TurnIPs, wgLogf); err != nil {
+				// Перезапущенный клиент WDTT Plus присылает тот же конфиг —
+				// туннель уже поднят, пересоздавать адаптер незачем.
+				b.mu.Lock()
+				same := b.wgConf == ev.Data && wg.Active()
+				b.mu.Unlock()
+				if same {
+					b.onEvent("state_changed", "connected")
+					continue
+				}
+				err := wg.Apply(ev.Data, ev.TurnIPs, wgLogf)
+				if err == nil {
+					b.mu.Lock()
+					b.wgConf = ev.Data
+					b.mu.Unlock()
+				}
+				if err != nil {
 					b.onEvent("error", fmt.Sprintf("[WG] Ошибка: %v", err))
 				} else {
 					b.onEvent("log", "INFO", "[WG] Конфиг применён, туннель активен")

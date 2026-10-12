@@ -39,3 +39,6 @@ desktop.ini
 
 # Logs
 *.log
+
+# Клиент WDTT Plus — собирается scripts/build-engine.sh
+/assets/wdtt-client.exe

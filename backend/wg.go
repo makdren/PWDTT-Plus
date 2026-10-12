@@ -842,3 +842,10 @@ func parseNativeIPv6Default(out string) bool {
 	}
 	return false
 }
+
+// Active — поднят ли сейчас туннель.
+func (w *WG) Active() bool {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	return w.activeDevice != nil
+}

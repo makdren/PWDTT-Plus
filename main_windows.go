@@ -32,6 +32,10 @@ var trayIcon []byte
 //go:embed assets/wintun.dll
 var wintunDLL []byte
 
+// Клиент WDTT Plus (собирается scripts/build-engine.sh из WDTT-Plus/go_client).
+//go:embed assets/wdtt-client.exe
+var wdttClientExe []byte
+
 var (
 	trayReady    atomic.Bool
 	trayStopping atomic.Bool
@@ -126,6 +130,7 @@ func stopTray() {
 func main() {
 	backend.WaitAfterUpdate(os.Args[1:])
 	backend.InitWintun(wintunDLL)
+	backend.InitEngine(wdttClientExe)
 	app := backend.NewApp()
 	app.HandleLaunchArgs(os.Args[1:])
 	secondInstanceLaunch := make(chan struct{}, 1)

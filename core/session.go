@@ -124,10 +124,20 @@ func RunSession(
 	transport := tp.selector.Pick(sessionID)
 	useTCP := transport == TransportTCP
 	setupStart := time.Now()
-	established := false
+	// Успех транспорта — первые данные от VPS по этой сессии, а не голое
+	// DTLS-рукопожатие: по TCP рукопожатие может пройти, а данные — нет.
+	var serverReplied atomic.Bool
+	markReplied := func() {
+		if serverReplied.CompareAndSwap(false, true) {
+			tp.selector.Report(transport, true, time.Since(setupStart))
+		}
+	}
 	defer func() {
-		if !established && sessErr != nil &&
-			(sessErr.Type == SessionErrorAddressDead || sessErr.Type == SessionErrorWrapTimeout) {
+		if ctx.Err() != nil || serverReplied.Load() || sessErr == nil {
+			return
+		}
+		switch sessErr.Type {
+		case SessionErrorAddressDead, SessionErrorWrapTimeout, SessionErrorRetry:
 			tp.selector.Report(transport, false, 0)
 		}
 	}()
@@ -227,6 +237,16 @@ func RunSession(
 			// креды через GetCreds (кеш уже инвалидирован выше) и повторит
 			return false, &SessionError{
 				Type:    SessionErrorAuth,
+				Address: turnAddr,
+				Err:     fmt.Errorf("TURN Allocate: %w", err),
+			}
+		}
+
+		// VK не ответил на Allocate (часто — всплеск запросов): не фатально,
+		// воркер повторит позже. Раньше воркер останавливался навсегда.
+		if strings.Contains(errLower, "retransmission") {
+			return false, &SessionError{
+				Type:    SessionErrorRetry,
 				Address: turnAddr,
 				Err:     fmt.Errorf("TURN Allocate: %w", err),
 			}
@@ -395,8 +415,12 @@ func RunSession(
 	select {
 	case handshakeSem <- struct{}{}:
 	case <-sessCtx.Done():
+		errType := SessionErrorRetry // релей TURN закрылся, пока ждали очередь
+		if ctx.Err() != nil {
+			errType = SessionErrorFatal // общее отключение
+		}
 		return false, &SessionError{
-			Type:    SessionErrorFatal,
+			Type:    errType,
 			Address: turnAddr,
 			Err:     sessCtx.Err(),
 		}
@@ -445,6 +469,15 @@ func RunSession(
 				}
 			}
 		}
+		if errors.Is(err, context.Canceled) || sessCtx.Err() != nil {
+			// Сессию отменили (закрылся релей TURN или идёт отключение):
+			// адрес исправен — не баним, просто повторяем.
+			return false, &SessionError{
+				Type:    SessionErrorRetry,
+				Address: turnAddr,
+				Err:     fmt.Errorf("DTLS хендшейк прерван: %w", err),
+			}
+		}
 		return false, &SessionError{
 			Type:    SessionErrorAddressDead,
 			Address: turnAddr,
@@ -452,9 +485,6 @@ func RunSession(
 		}
 	}
 	log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
-	established = true
-	tp.selector.Report(transport, true, time.Since(setupStart))
-	go tp.selector.Watch(sessCtx, transport, sessCancel)
 
 	stats.ActiveConnections.Add(1)
 	defer stats.ActiveConnections.Add(-1)
@@ -499,6 +529,7 @@ func RunSession(
 				return false, &SessionError{Type: SessionErrorRetry, Address: turnAddr, Err: confErr}
 			}
 		} else if conf != "" {
+			markReplied()
 			if noteServerConfig(conf) == serverModeMux {
 				if mode != serverModeMux {
 					log.Printf("[ЯДРО] Сервер WDTT-Plus: включён многопоточный режим (WDTT_MUX1)")
@@ -633,6 +664,7 @@ func RunSession(
 			}
 
 			lastServerRx.Store(time.Now().UnixNano())
+			markReplied()
 			if n == 1 && pkt[0] == keepaliveByte {
 				pongSeen.Store(true)
 				putPktBuf(pkt)

@@ -390,6 +390,17 @@ func WorkerGroup(
 						}
 						continue
 
+					case SessionErrorRetry:
+						// Временный сбой: адрес не баним, берём следующий и ждём
+						// с разбросом, чтобы воркеры не стучались в VK разом.
+						relayOffset++
+						select {
+						case <-time.After(2*time.Second + time.Duration(wid%10)*300*time.Millisecond):
+						case <-ctx.Done():
+							return
+						}
+						continue
+
 					case SessionErrorPolicy:
 						if noteWorkerPolicy(sessErr.Limit) {
 							log.Printf("[ЯДРО] Сервер WDTT-Plus ограничил доступ до %d потоков — лишние воркеры будут остановлены", sessErr.Limit)

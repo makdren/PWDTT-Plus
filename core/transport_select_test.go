@@ -12,10 +12,17 @@ func TestSelectorFixedMode(t *testing.T) {
 	}
 }
 
-func TestSelectorProbeAlternates(t *testing.T) {
+// Во время пробы почти все воркеры идут по UDP, TCP — только каждый девятый.
+func TestSelectorProbeMostlyUDP(t *testing.T) {
 	s := newTransportSelector("auto")
-	if s.Pick(1) != TransportUDP || s.Pick(2) != TransportTCP || !s.Probing() {
-		t.Fatal("probe should alternate")
+	tcp := 0
+	for id := 1; id <= 18; id++ {
+		if s.Pick(id) == TransportTCP {
+			tcp++
+		}
+	}
+	if tcp != 2 || !s.Probing() {
+		t.Fatalf("tcp probes = %d", tcp)
 	}
 }
 
@@ -30,23 +37,26 @@ func TestSelectorUDPBlocked(t *testing.T) {
 	}
 }
 
-func TestSelectorPrefersUDPWhenClose(t *testing.T) {
+// Сценарий из лога 12:11: TCP быстрее устанавливает соединение, но UDP
+// работает — остаёмся на UDP (раньше выбор качался и рвал сессии).
+func TestSelectorStaysOnWorkingUDP(t *testing.T) {
 	s := newTransportSelector("auto")
-	for i := 0; i < 2; i++ {
-		s.Report(TransportUDP, true, 500*time.Millisecond)
-		s.Report(TransportTCP, true, 450*time.Millisecond)
-	}
+	s.Report(TransportTCP, true, 236*time.Millisecond)
+	s.Report(TransportTCP, true, 236*time.Millisecond)
+	s.Report(TransportUDP, true, 2*time.Second)
+	s.Report(TransportUDP, true, 2*time.Second)
 	if s.Current() != TransportUDP {
 		t.Fatalf("got %q", s.Current())
 	}
 }
 
-func TestSelectorTCPMuchFaster(t *testing.T) {
+func TestSelectorUnstableUDP(t *testing.T) {
 	s := newTransportSelector("auto")
-	for i := 0; i < 2; i++ {
-		s.Report(TransportUDP, true, 2*time.Second)
-		s.Report(TransportTCP, true, 400*time.Millisecond)
+	s.Report(TransportUDP, true, time.Second)
+	for i := 0; i < 5; i++ {
+		s.Report(TransportUDP, false, 0)
 	}
+	s.Report(TransportTCP, true, time.Second)
 	if s.Current() != TransportTCP {
 		t.Fatalf("got %q", s.Current())
 	}
@@ -54,16 +64,18 @@ func TestSelectorTCPMuchFaster(t *testing.T) {
 
 func TestSelectorFailover(t *testing.T) {
 	s := newTransportSelector("auto")
-	for i := 0; i < 2; i++ {
-		s.Report(TransportUDP, true, 300*time.Millisecond)
-		s.Report(TransportTCP, true, 900*time.Millisecond)
-	}
+	s.Report(TransportUDP, true, 300*time.Millisecond)
+	s.Report(TransportUDP, true, 300*time.Millisecond)
 	if s.Current() != TransportUDP {
 		t.Fatal("expected udp")
 	}
-	for i := 0; i < selectFailoverStreak; i++ {
+	for i := 0; i < selectFailoverStreak-1; i++ {
 		s.Report(TransportUDP, false, 0)
 	}
+	if s.Current() != TransportUDP {
+		t.Fatal("switched too early")
+	}
+	s.Report(TransportUDP, false, 0)
 	if s.Current() != TransportTCP {
 		t.Fatalf("expected failover to tcp, got %q", s.Current())
 	}

@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"log"
 	"sort"
 	"strings"
@@ -11,24 +10,27 @@ import (
 
 // Выбор транспорта до TURN-серверов VK: UDP, TCP или автоматически.
 //
-// В режиме "auto" первые сессии пробуют UDP и TCP поровну. Для каждого
-// транспорта копится успешность и время установки сессии (TURN Allocate +
-// DTLS-рукопожатие до VPS). Победитель — транспорт, который работает, а при
-// равной успешности — с меньшим временем установки; UDP получает фору, потому
-// что поверх TCP поток туннеля страдает от блокировки очереди. Сессии на
-// проигравшем транспорте переподключаются. Если выбранный транспорт подряд
-// много раз не поднимается, выбор пересматривается.
+// Режим "auto" — это UDP с запасным TCP. Через TCP туннель почти всегда
+// медленнее (блокировка очереди), поэтому TCP пробует лишь каждый девятый
+// воркер, а основная масса идёт по UDP. Успехом считается сессия, по которой
+// от VPS реально пришли данные, а не только DTLS-рукопожатие. На TCP клиент
+// переходит, только если UDP не работает (сессии не поднимаются или почти
+// все падают), а TCP — работает.
+//
+// Решение касается только НОВЫХ сессий: живые сессии никогда не рвутся из-за
+// смены выбора. Иначе десятки воркеров разом идут за новыми TURN-сессиями,
+// VK отвечает на такой всплеск отказами — и выбор начинает качаться.
 
 const (
 	TransportAuto = "auto"
 	TransportUDP  = "udp"
 	TransportTCP  = "tcp"
 
-	selectMinSamples      = 2                // успешных установок на транспорт для сравнения
-	selectProbeTimeout    = 25 * time.Second // дольше не пробуем — решаем по тому, что есть
-	selectFailoverStreak  = 6                // подряд неудач выбранного транспорта для смены
-	selectUDPPreference   = 1.3              // TCP должен быть заметно быстрее, чтобы победить
-	selectRecheckInterval = 10 * time.Minute // повторная проба после смены сети и т.п.
+	selectMinSamples      = 2                // успешных UDP-сессий, чтобы закрепить UDP
+	selectProbeTimeout    = 30 * time.Second // дольше не пробуем — решаем по тому, что есть
+	selectFailoverStreak  = 8                // подряд неудач выбранного транспорта для смены
+	selectTCPProbeEvery   = 9                // во время пробы TCP получает каждый N-й воркер
+	selectRecheckInterval = 10 * time.Minute // после ухода на TCP — снова пробуем UDP
 )
 
 func NormalizeTransportMode(mode string, legacyTCP bool) string {
@@ -95,8 +97,8 @@ func (s *transportSelector) Pick(workerID int) string {
 	if s.mode != TransportAuto {
 		return s.mode
 	}
-	if s.chosen != "" && time.Since(s.decided) > selectRecheckInterval {
-		// Сеть могла смениться — заново сравниваем, не трогая живые сессии.
+	if s.chosen == TransportTCP && time.Since(s.decided) > selectRecheckInterval {
+		// Сеть могла смениться — снова пробуем UDP, не трогая живые сессии.
 		s.restartProbeLocked()
 	}
 	if s.chosen != "" {
@@ -106,7 +108,7 @@ func (s *transportSelector) Pick(workerID int) string {
 	if s.chosen != "" {
 		return s.chosen
 	}
-	if workerID%2 == 0 {
+	if workerID%selectTCPProbeEvery == 0 {
 		return TransportTCP
 	}
 	return TransportUDP
@@ -180,38 +182,28 @@ func (s *transportSelector) restartProbeLocked() {
 func (s *transportSelector) maybeDecideLocked() {
 	u, t := s.stats[TransportUDP], s.stats[TransportTCP]
 	timedOut := time.Since(s.started) > selectProbeTimeout
-	enough := u.ok >= selectMinSamples && t.ok >= selectMinSamples
 	udpDead := u.ok == 0 && u.fail >= 3
-	tcpDead := t.ok == 0 && t.fail >= 3
+	uRate := rate(u)
 
 	switch {
 	case udpDead && t.ok > 0:
-		s.decideLocked(TransportTCP, "UDP не проходит")
-	case tcpDead && u.ok > 0:
-		s.decideLocked(TransportUDP, "TCP не проходит")
-	case enough || (timedOut && (u.ok > 0 || t.ok > 0)):
-		if u.ok == 0 {
-			s.decideLocked(TransportTCP, "UDP не дал ни одной сессии")
-			return
-		}
-		if t.ok == 0 {
-			s.decideLocked(TransportUDP, "TCP не дал ни одной сессии")
-			return
-		}
-		um, tm := u.median(), t.median()
-		uRate := float64(u.ok) / float64(u.ok+u.fail)
-		tRate := float64(t.ok) / float64(t.ok+t.fail)
-		switch {
-		case tRate > uRate+0.25:
-			s.decideLocked(TransportTCP, "TCP стабильнее")
-		case uRate > tRate+0.25:
-			s.decideLocked(TransportUDP, "UDP стабильнее")
-		case float64(tm)*selectUDPPreference < float64(um):
-			s.decideLocked(TransportTCP, "TCP быстрее: "+tm.Round(time.Millisecond).String()+" против "+um.Round(time.Millisecond).String())
-		default:
-			s.decideLocked(TransportUDP, "UDP: "+um.Round(time.Millisecond).String()+", TCP: "+tm.Round(time.Millisecond).String())
-		}
+		s.decideLocked(TransportTCP, "UDP не проходит, TCP работает")
+	case u.ok >= selectMinSamples && uRate >= 0.5:
+		s.decideLocked(TransportUDP, "UDP работает: "+u.median().Round(time.Millisecond).String())
+	case u.ok+u.fail >= 6 && uRate < 0.5 && t.ok > 0 && rate(t) > uRate+0.25:
+		s.decideLocked(TransportTCP, "UDP нестабилен, TCP надёжнее")
+	case timedOut && u.ok > 0:
+		s.decideLocked(TransportUDP, "UDP работает")
+	case timedOut && t.ok > 0:
+		s.decideLocked(TransportTCP, "UDP не дал ни одной сессии")
 	}
+}
+
+func rate(st *transportStat) float64 {
+	if st.ok+st.fail == 0 {
+		return 0
+	}
+	return float64(st.ok) / float64(st.ok+st.fail)
 }
 
 func (s *transportSelector) decideLocked(transport, why string) {
@@ -224,29 +216,6 @@ func (s *transportSelector) setChosenLocked(transport string) {
 	s.decided = time.Now()
 	close(s.changed)
 	s.changed = make(chan struct{})
-}
-
-// Watch завершает сессию, если выбор транспорта ушёл от её транспорта.
-func (s *transportSelector) Watch(ctx context.Context, transport string, cancel context.CancelFunc) {
-	if s == nil || s.mode != TransportAuto {
-		return
-	}
-	for {
-		s.mu.Lock()
-		ch := s.changed
-		chosen := s.chosen
-		s.mu.Unlock()
-		if chosen != "" && chosen != transport {
-			log.Printf("[ТРАНСПОРТ] Сессия на %s переподключается на %s", strings.ToUpper(transport), strings.ToUpper(chosen))
-			cancel()
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ch:
-		}
-	}
 }
 
 func otherTransport(t string) string {

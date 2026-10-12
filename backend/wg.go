@@ -47,6 +47,7 @@ type WG struct {
 	turnExtra           map[string]bool // IP TURN, которые должны идти мимо туннеля
 	ownAddr             string          // адрес туннеля из конфига (для поиска чужих VPN)
 	ifName              string          // настоящее имя адаптера Wintun в Windows
+	activeRoutes6       []string        // IPv6-маршруты в туннель (защита от утечки)
 	physGW              string // physical gateway saved during apply for restore on teardown
 
 	// macOS-specific: соединение с привилегированным helper-процессом
@@ -355,6 +356,26 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 		}
 	}
 
+	// DNS из конфига сервера (DNS = ...): раньше на Windows он выбрасывался,
+	// и имена резолвились DNS провайдера мимо туннеля — утечка и подмена
+	// ответов для заблокированных сайтов. Снимается вместе с интерфейсом.
+	if servers := parseWGDNS(conf); len(servers) > 0 {
+		for i, dns := range servers {
+			var err error
+			if i == 0 {
+				err = runCmdWindows("netsh", "interface", "ipv4", "set", "dnsservers",
+					"name="+w.ifName, "source=static", "address="+dns, "register=none", "validate=no")
+			} else {
+				err = runCmdWindows("netsh", "interface", "ipv4", "add", "dnsservers",
+					"name="+w.ifName, "address="+dns, fmt.Sprintf("index=%d", i+1), "validate=no")
+			}
+			if err != nil {
+				logf(fmt.Sprintf("Не удалось задать DNS %s: %v", dns, err))
+			}
+		}
+		logf(fmt.Sprintf("DNS туннеля: %v", servers))
+	}
+
 	// Set low metric on WG interface so it wins over physical default route
 	if err := runCmdWindows("netsh", "interface", "ip", "set", "interface",
 		"interface="+w.ifName, "metric=1"); err != nil {
@@ -402,8 +423,21 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 	}
 	w.activeRoutes = tunnelRoutes
 
+	// Защита от утечки по IPv6: туннель только IPv4, и при «родном» IPv6 от
+	// провайдера сайты по IPv6 шли бы мимо VPN. Направляем IPv6 в туннель —
+	// WireGuard его отбрасывает, программы переходят на IPv4 через туннель.
+	if hasNativeIPv6Default() && containsCIDR(allowedIPs, "0.0.0.0/0") {
+		for _, cidr := range []string{"::/1", "8000::/1"} {
+			if err := runCmdWindows("netsh", "interface", "ipv6", "add", "route", cidr, w.ifName); err == nil {
+				w.activeRoutes6 = append(w.activeRoutes6, cidr)
+			}
+		}
+		if len(w.activeRoutes6) > 0 {
+			logf("IPv6 направлен в туннель (защита от утечки)")
+		}
+	}
+
 	logf(fmt.Sprintf("Туннель %s поднят, AllowedIPs: %v", w.ifName, tunnelRoutes))
-	logf("Маршруты по умолчанию: " + describeDefaultRoutes())
 	return nil
 }
 
@@ -423,24 +457,6 @@ func expandDefaultRoute(allowedIPs []string) []string {
 	return out
 }
 
-// describeDefaultRoutes — маршруты по умолчанию для лога (диагностика).
-func describeDefaultRoutes() string {
-	cmd := exec.Command("route", "print", "-4", "0.0.0.0")
-	hideWindow(cmd)
-	out, err := cmd.Output()
-	if err != nil {
-		return "не удалось получить"
-	}
-	var parts []string
-	for _, r := range parseDefaultRoutes(string(out)) {
-		name := interfaceNameByIP(r.iface)
-		if name == "" {
-			name = r.iface
-		}
-		parts = append(parts, name+" via "+r.gateway)
-	}
-	return strings.Join(parts, "; ")
-}
 
 func (w *WG) teardownWindows() {
 	w.stateMu.Lock()
@@ -476,6 +492,10 @@ func (w *WG) teardownWindowsLocked() {
 	for _, cidr := range w.activeRoutes {
 		_ = runCmdWindows("netsh", "interface", "ip", "delete", "route", cidr, w.ifName)
 	}
+	for _, cidr := range w.activeRoutes6 {
+		_ = runCmdWindows("netsh", "interface", "ipv6", "delete", "route", cidr, w.ifName)
+	}
+	w.activeRoutes6 = nil
 	w.activeRoutes = nil
 
 	// Close WireGuard device
@@ -749,4 +769,76 @@ func (w *WG) Diagnose(logf wgLogFunc) {
 		}
 		logf("[ДИАГ] WireGuard: " + strings.Join(keep, " "))
 	}
+}
+
+// parseWGDNS — IPv4-адреса из строки "DNS = a, b" секции [Interface].
+func parseWGDNS(conf string) []string {
+	var out []string
+	for _, line := range strings.Split(conf, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), "dns") {
+			continue
+		}
+		for _, item := range strings.Split(v, ",") {
+			if ip := net.ParseIP(strings.TrimSpace(item)); ip != nil && ip.To4() != nil {
+				out = append(out, ip.String())
+			}
+		}
+	}
+	return out
+}
+
+// Handshaked — было ли рукопожатие WireGuard с сервером.
+func (w *WG) Handshaked() bool {
+	w.stateMu.Lock()
+	dev := w.activeDevice
+	w.stateMu.Unlock()
+	if dev == nil {
+		return false
+	}
+	st, err := dev.IpcGet()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(st, "\n") {
+		if v, ok := strings.CutPrefix(line, "last_handshake_time_sec="); ok && v != "0" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsCIDR(list []string, cidr string) bool {
+	for _, c := range list {
+		if c == cidr {
+			return true
+		}
+	}
+	return false
+}
+
+// hasNativeIPv6Default — есть ли IPv6-маршрут по умолчанию не через Teredo
+// (Teredo сам идёт поверх IPv4 и так попадает в туннель).
+func hasNativeIPv6Default() bool {
+	cmd := exec.Command("netsh", "interface", "ipv6", "show", "route")
+	hideWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return parseNativeIPv6Default(string(out))
+}
+
+func parseNativeIPv6Default(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		// Publish Type Met Prefix Idx Gateway/Interface
+		if len(f) >= 6 && f[3] == "::/0" {
+			iface := strings.ToLower(strings.Join(f[5:], " "))
+			if !strings.Contains(iface, "teredo") && !strings.Contains(iface, "loopback") {
+				return true
+			}
+		}
+	}
+	return false
 }

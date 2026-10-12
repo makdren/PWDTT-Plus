@@ -49,3 +49,12 @@ func TestIsDeniedReason(t *testing.T) {
 		t.Fatal("invalid reasons")
 	}
 }
+
+func TestFtoa(t *testing.T) {
+	cases := map[float64]string{0: "0.00", 0.03: "0.03", 1.05: "1.05", 12.5: "12.50", 3.999: "4.00"}
+	for in, want := range cases {
+		if got := ftoa(in); got != want {
+			t.Errorf("ftoa(%v)=%q want %q", in, got, want)
+		}
+	}
+}

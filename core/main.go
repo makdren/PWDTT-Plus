@@ -132,7 +132,7 @@ func New(cfg Config) *Core {
 		ctx:               ctx,
 		cancel:            cancel,
 		CaptchaResultChan: make(chan string, 1),
-		events:            make(chan Event, 1024), // увеличен буфер для логов
+		events:            make(chan Event, 8192), // логи всплесками: переподключение десятков воркеров
 		allocateGate:      newAllocationGate(allocateGateInterval),
 	}
 	c.captchaMode.Store(normalizeCaptchaMode(cfg.CaptchaMode))

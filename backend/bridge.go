@@ -241,26 +241,8 @@ func (b *Bridge) forwardEvents(events <-chan core.Event, sessID uint64) {
 				} else {
 					b.onEvent("log", "INFO", "[WG] Конфиг применён, туннель активен")
 					b.onEvent("state_changed", "connected")
-					// Диагностика туннеля в лог: через 5 и 20 секунд.
-					go func(sess uint64) {
-						for _, d := range []time.Duration{5 * time.Second, 15 * time.Second} {
-							time.Sleep(d)
-							b.mu.Lock()
-							alive := b.session == sess && b.running
-							b.mu.Unlock()
-							if !alive {
-								return
-							}
-							wg.Diagnose(wgLogf)
-						}
-					}(sessID)
-					// Чужой VPN с маршрутом по умолчанию забирает весь трафик себе.
-					if others := OtherVPNs(wg.TunnelAddrs()); len(others) > 0 {
-						msg := "Работает другой VPN (" + strings.Join(others, ", ") +
-							") — он перехватывает трафик, и интернет через PWDTT Plus не пойдёт. Отключите его и переподключитесь."
-						wgLogf("Обнаружен другой VPN: " + strings.Join(others, ", "))
-						b.onEvent("error", msg)
-					}
+					// Через 5 и 20 секунд: диагностика в лог, чужой VPN, рукопожатие.
+					go b.watchTunnel(sessID, wgLogf)
 				}
 			case "captcha_required":
 				b.onEvent("captcha_required", ev.Data)
@@ -289,6 +271,11 @@ func (b *Bridge) forwardEvents(events <-chan core.Event, sessID uint64) {
 		log.Printf("[BRIDGE] Завершение устаревшей сессии проигнорировано (актуальна #%d)", curSession)
 		return
 	}
+
+	// Ядро остановилось (в том числе само — отказ сервера, все воркеры
+	// завершились): снимаем туннель, иначе его маршруты держат весь трафик в
+	// мёртвом интерфейсе и интернет пропадает, хотя приложение «отключено».
+	wg.Teardown()
 
 	b.flushLogs()
 	b.onEvent("state_changed", "disconnected")
@@ -322,4 +309,34 @@ func normalizeSNI(v string) string {
 		return ""
 	}
 	return sni
+}
+
+// watchTunnel проверяет туннель после подключения: пишет диагностику, ищет
+// чужой VPN (его маршрут мог появиться не сразу) и предупреждает, если
+// WireGuard так и не договорился с сервером.
+func (b *Bridge) watchTunnel(sessID uint64, logf func(string)) {
+	alive := func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.session == sessID && b.running
+	}
+	warnedVPN := false
+	for i, d := range []time.Duration{5 * time.Second, 15 * time.Second} {
+		time.Sleep(d)
+		if !alive() {
+			return
+		}
+		wg.Diagnose(logf)
+		if others := OtherVPNs(wg.TunnelAddrs()); len(others) > 0 && !warnedVPN {
+			warnedVPN = true
+			logf("Обнаружен другой VPN: " + strings.Join(others, ", "))
+			b.onEvent("error", "Работает другой VPN ("+strings.Join(others, ", ")+
+				") — он перехватывает трафик, и интернет через PWDTT Plus не пойдёт. Отключите его и переподключитесь.")
+		}
+		if i == 1 && !wg.Handshaked() {
+			logf("WireGuard не получил ответа сервера за 20 с")
+			b.onEvent("error", "Сервер не отвечает на рукопожатие WireGuard: потоки подключены, но трафик не идёт. "+
+				"Проверьте, что этот пароль не используется сейчас на другом компьютере с PWDTT, и переподключитесь.")
+		}
+	}
 }

@@ -38,3 +38,25 @@ func TestExpandDefaultRoute(t *testing.T) {
 		t.Fatalf("split AllowedIPs must stay as is: %v", got)
 	}
 }
+
+func TestParseNativeIPv6Default(t *testing.T) {
+	teredo := `Publish  Type      Met  Prefix                    Idx  Gateway/Interface Name
+-------  --------  ---  ------------------------  ---  ------------------------
+No       Manual    256  ::/0                       12  Teredo Tunneling Pseudo-Interface
+No       System    256  ::1/128                     1  Loopback Pseudo-Interface 1`
+	if parseNativeIPv6Default(teredo) {
+		t.Fatal("Teredo must not count as native IPv6")
+	}
+	native := `No       Manual    256  ::/0                       10  fe80::1`
+	if !parseNativeIPv6Default(native) {
+		t.Fatal("native IPv6 default route not detected")
+	}
+}
+
+func TestParseWGDNS(t *testing.T) {
+	conf := "[Interface]\nPrivateKey = x\nAddress = 10.66.66.4/32\nDNS = 1.1.1.1, 8.8.8.8, ::1\n[Peer]\n"
+	got := parseWGDNS(conf)
+	if len(got) != 2 || got[0] != "1.1.1.1" || got[1] != "8.8.8.8" {
+		t.Fatalf("got %v", got)
+	}
+}

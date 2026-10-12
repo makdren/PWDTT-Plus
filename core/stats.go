@@ -61,8 +61,15 @@ func itoa(n int) string {
 }
 
 func ftoa(f float64) string {
-	// простая конвертация без fmt
-	intPart := int(f)
-	decPart := int((f - float64(intPart)) * 100)
-	return itoa(intPart) + "." + itoa(decPart)
+	// Две цифры после точки с ведущим нулём: раньше 1.05 печаталось как "1.5".
+	if f < 0 {
+		f = 0
+	}
+	hundredths := int(f*100 + 0.5)
+	frac := hundredths % 100
+	pad := ""
+	if frac < 10 {
+		pad = "0"
+	}
+	return itoa(hundredths/100) + "." + pad + itoa(frac)
 }

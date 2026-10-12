@@ -46,6 +46,7 @@ type WG struct {
 	activeExcludeRoutes []string
 	turnExtra           map[string]bool // IP TURN, которые должны идти мимо туннеля
 	ownAddr             string          // адрес туннеля из конфига (для поиска чужих VPN)
+	ifName              string          // настоящее имя адаптера Wintun в Windows
 	physGW              string // physical gateway saved during apply for restore on teardown
 
 	// macOS-specific: соединение с привилегированным helper-процессом
@@ -316,6 +317,12 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 		return fmt.Errorf("create TUN: %w", err)
 	}
 	w.activeTun = tunDev
+	// Windows может дать адаптеру другое имя, если "pwdtt-wg" занято
+	// (остатки прошлых запусков и т.п.). Все netsh-команды — по настоящему.
+	w.ifName = realIfName(tunDev, wgIface)
+	if w.ifName != wgIface {
+		logf(fmt.Sprintf("Адаптер получил имя %q", w.ifName))
+	}
 
 	// Create userspace WireGuard device
 	logger := &device.Logger{
@@ -338,17 +345,21 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 
 	// Set IP address on the interface
 	if err := runCmdWindows("netsh", "interface", "ip", "set", "address",
-		"name="+wgIface, "source=static", addr, "none"); err != nil {
+		"name="+w.ifName, "source=static", addr, "none"); err != nil {
 		host, mask, _ := parseCIDR(addr)
 		if host != "" {
-			_ = runCmdWindows("netsh", "interface", "ip", "set", "address",
-				"name="+wgIface, "source=static", host, mask)
+			if err2 := runCmdWindows("netsh", "interface", "ip", "set", "address",
+				"name="+w.ifName, "source=static", host, mask); err2 != nil {
+				logf(fmt.Sprintf("Не удалось задать адрес %s: %v", addr, err2))
+			}
 		}
 	}
 
 	// Set low metric on WG interface so it wins over physical default route
-	_ = runCmdWindows("netsh", "interface", "ip", "set", "interface",
-		"interface="+wgIface, "metric=1")
+	if err := runCmdWindows("netsh", "interface", "ip", "set", "interface",
+		"interface="+w.ifName, "metric=1"); err != nil {
+		logf(fmt.Sprintf("Не удалось задать метрику: %v", err))
+	}
 
 	// Get physical gateway and raise its metric so WG takes priority
 	gw := defaultGatewayWindows()
@@ -384,14 +395,14 @@ func (w *WG) applyWindows(conf string, turnIPs []string, logf wgLogFunc) error {
 	// Add AllowedIPs routes via the WG interface
 	var tunnelRoutes []string
 	for _, cidr := range expandDefaultRoute(allowedIPs) {
-		if err := runCmdWindows("netsh", "interface", "ip", "add", "route", cidr, wgIface); err != nil {
+		if err := runCmdWindows("netsh", "interface", "ip", "add", "route", cidr, w.ifName); err != nil {
 			logf(fmt.Sprintf("netsh add route %s failed: %v", cidr, err))
 		}
 		tunnelRoutes = append(tunnelRoutes, cidr)
 	}
 	w.activeRoutes = tunnelRoutes
 
-	logf(fmt.Sprintf("Туннель %s поднят, AllowedIPs: %v", wgIface, tunnelRoutes))
+	logf(fmt.Sprintf("Туннель %s поднят, AllowedIPs: %v", w.ifName, tunnelRoutes))
 	logf("Маршруты по умолчанию: " + describeDefaultRoutes())
 	return nil
 }
@@ -463,7 +474,7 @@ func (w *WG) teardownWindowsLocked() {
 
 	// Delete tunnel routes explicitly to prevent Windows routing table corruption
 	for _, cidr := range w.activeRoutes {
-		_ = runCmdWindows("netsh", "interface", "ip", "delete", "route", cidr, wgIface)
+		_ = runCmdWindows("netsh", "interface", "ip", "delete", "route", cidr, w.ifName)
 	}
 	w.activeRoutes = nil
 
@@ -679,4 +690,63 @@ func (w *WG) TunnelAddrs() (physGW, ownAddr string) {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
 	return w.physGW, w.ownAddr
+}
+
+// Diagnose пишет в лог состояние туннеля: адрес интерфейса, маршруты в
+// туннель и счётчики WireGuard (было ли рукопожатие с сервером, сколько
+// байт прошло). Вызывается через несколько секунд после подключения.
+func (w *WG) Diagnose(logf wgLogFunc) {
+	if runtime.GOOS != "windows" || logf == nil {
+		return
+	}
+	w.stateMu.Lock()
+	dev, ifName, own := w.activeDevice, w.ifName, w.ownAddr
+	w.stateMu.Unlock()
+	if dev == nil {
+		return
+	}
+	ifc, err := net.InterfaceByName(ifName)
+	if err != nil {
+		logf(fmt.Sprintf("[ДИАГ] Интерфейс %q не найден: %v", ifName, err))
+	} else {
+		addrs, _ := ifc.Addrs()
+		logf(fmt.Sprintf("[ДИАГ] Интерфейс %q: адреса %v, флаги %v", ifName, addrs, ifc.Flags))
+	}
+	ownIP := own
+	if ip, _, err := net.ParseCIDR(own); err == nil {
+		ownIP = ip.String()
+	}
+	cmd := exec.Command("route", "print", "-4")
+	hideWindow(cmd)
+	if out, err := cmd.Output(); err == nil {
+		var tunnel, defaults []string
+		for _, line := range strings.Split(string(out), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 5 || net.ParseIP(f[0]) == nil || net.ParseIP(f[3]) == nil {
+				continue
+			}
+			if f[3] == ownIP {
+				tunnel = append(tunnel, f[0]+"/"+f[1])
+			}
+			if (f[0] == "0.0.0.0" || f[0] == "128.0.0.0") && (f[1] == "0.0.0.0" || f[1] == "128.0.0.0") {
+				name := interfaceNameByIP(f[3])
+				if name == "" {
+					name = f[3]
+				}
+				defaults = append(defaults, f[0]+"/"+f[1]+" "+name+" m="+f[4])
+			}
+		}
+		logf(fmt.Sprintf("[ДИАГ] Маршруты через туннель (%s): %v", ownIP, tunnel))
+		logf(fmt.Sprintf("[ДИАГ] Маршруты 0.0.0.0/128.0.0.0: %v", defaults))
+	}
+	if st, err := dev.IpcGet(); err == nil {
+		var keep []string
+		for _, line := range strings.Split(st, "\n") {
+			if strings.HasPrefix(line, "last_handshake_time_sec=") || strings.HasPrefix(line, "rx_bytes=") ||
+				strings.HasPrefix(line, "tx_bytes=") || strings.HasPrefix(line, "endpoint=") {
+				keep = append(keep, line)
+			}
+		}
+		logf("[ДИАГ] WireGuard: " + strings.Join(keep, " "))
+	}
 }

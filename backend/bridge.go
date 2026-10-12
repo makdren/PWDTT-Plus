@@ -237,6 +237,19 @@ func (b *Bridge) forwardEvents(events <-chan core.Event, sessID uint64) {
 				} else {
 					b.onEvent("log", "INFO", "[WG] Конфиг применён, туннель активен")
 					b.onEvent("state_changed", "connected")
+					// Диагностика туннеля в лог: через 5 и 20 секунд.
+					go func(sess uint64) {
+						for _, d := range []time.Duration{5 * time.Second, 15 * time.Second} {
+							time.Sleep(d)
+							b.mu.Lock()
+							alive := b.session == sess && b.running
+							b.mu.Unlock()
+							if !alive {
+								return
+							}
+							wg.Diagnose(wgLogf)
+						}
+					}(sessID)
 					// Чужой VPN с маршрутом по умолчанию забирает весь трафик себе.
 					if others := OtherVPNs(wg.TunnelAddrs()); len(others) > 0 {
 						msg := "Работает другой VPN (" + strings.Join(others, ", ") +

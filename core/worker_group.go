@@ -121,6 +121,7 @@ func WorkerGroup(
 	var curUser, curPass string
 	var curURLs []string
 	var credGen uint64
+	var lastQuotaRefresh time.Time // под refreshMu
 
 	fetchCreds := func() error {
 		u, p, urls, err := GetCreds(ctx, hash, credStreamID)
@@ -388,6 +389,33 @@ func WorkerGroup(
 						refreshMu.Unlock()
 						select {
 						case <-time.After(2 * time.Second):
+						case <-ctx.Done():
+							return
+						}
+						continue
+
+					case SessionErrorQuota:
+						// Квота сессий на учётные данные: новые учётные данные дают
+						// новую квоту. Обновляет один воркер и не чаще раза в минуту.
+						refreshMu.Lock()
+						credsMu.RLock()
+						currentGen := credGen
+						credsMu.RUnlock()
+						if currentGen == gen && time.Since(lastQuotaRefresh) > time.Minute {
+							lastQuotaRefresh = time.Now()
+							log.Printf("[ГРУППА #%d] Квота TURN-сессий VK исчерпана — беру новые учётные данные", groupID)
+							getStreamCache(credStreamID).invalidate(credStreamID)
+							if err := fetchCreds(); err == nil {
+								credsMu.Lock()
+								credGen++
+								credsMu.Unlock()
+							} else {
+								log.Printf("[ВОРКЕР #%d] Не удалось обновить креды: %v", wid, err)
+							}
+						}
+						refreshMu.Unlock()
+						select {
+						case <-time.After(5*time.Second + time.Duration(wid%10)*500*time.Millisecond):
 						case <-ctx.Done():
 							return
 						}

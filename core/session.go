@@ -98,6 +98,8 @@ const (
 	SessionErrorPolicy SessionErrorType = "POLICY"
 	// RETRY — временный сбой на стороне VPS; адрес TURN исправен, повторяем позже
 	SessionErrorRetry SessionErrorType = "RETRY"
+	// QUOTA — VK исчерпал квоту сессий на эти учётные данные (486)
+	SessionErrorQuota SessionErrorType = "QUOTA"
 )
 
 // SessionError — структурированная ошибка сессии
@@ -197,6 +199,7 @@ func RunSession(
 		}
 	}
 	defer turnConn.Close()
+	deletion := newTurnDeletionTransport(turnConn)
 
 	log.Printf("[СЕССИЯ #%d] TURN %s (%s)", sessionID, strings.ToUpper(transport), plainAddr)
 
@@ -210,7 +213,7 @@ func RunSession(
 	tc, err := turn.NewClient(&turn.ClientConfig{
 		STUNServerAddr:         turnAddrResolved,
 		TURNServerAddr:         turnAddrResolved,
-		Conn:                   turnConn,
+		Conn:                   deletion,
 		Username:               turnUser,
 		Password:               turnPass,
 		RequestedAddressFamily: addrFamily,
@@ -270,10 +273,18 @@ func RunSession(
 			}
 		}
 
-		// Квота, unreachable, timeout — всё это "адрес мёртв"
-		if strings.Contains(errLower, "quota") ||
-			strings.Contains(errLower, "486") ||
-			strings.Contains(errLower, "unreachable") ||
+		// 486 — квота сессий на учётные данные VK, адрес исправен:
+		// нужны новые учётные данные, а не бан адреса.
+		if strings.Contains(errLower, "quota") || strings.Contains(errLower, "486") {
+			return false, &SessionError{
+				Type:    SessionErrorQuota,
+				Address: turnAddr,
+				Err:     fmt.Errorf("TURN Allocate: %w", err),
+			}
+		}
+
+		// Unreachable, timeout — "адрес мёртв"
+		if strings.Contains(errLower, "unreachable") ||
 			strings.Contains(errLower, "timeout") ||
 			strings.Contains(errLower, "connection refused") ||
 			strings.Contains(errLower, "no route to host") {
@@ -291,7 +302,8 @@ func RunSession(
 			Err:     fmt.Errorf("TURN Allocate: %w", err),
 		}
 	}
-	defer relay.Close()
+	// Удаляем сессию на VK и ждём подтверждения, пока клиент и сокет живы.
+	defer closeRelay(relay, deletion)
 
 	getStreamCache(cacheStreamID).errorCount.Store(0)
 

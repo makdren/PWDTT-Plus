@@ -2,8 +2,6 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -38,8 +36,6 @@ var (
 	serverModeValue atomic.Int32
 	serverModeReady chan struct{}
 
-	transportSession string
-	workerAttempt    atomic.Uint64
 )
 
 func init() { resetServerMode() }
@@ -50,16 +46,6 @@ func resetServerMode() {
 	defer serverModeMu.Unlock()
 	serverModeValue.Store(serverModeUnknown)
 	serverModeReady = make(chan struct{})
-	transportSession = newTransportSession()
-	workerAttempt.Store(0)
-}
-
-func newTransportSession() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("pwdtt-%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(b[:])
 }
 
 // noteServerConfig определяет режим сервера по ответу на GETCONF.
@@ -104,17 +90,16 @@ func muxDeviceInfo() string {
 	return strings.ReplaceAll(string(data), "|", " ")
 }
 
-// requestMuxConfig — GETCONF в формате WDTT-Plus: с описанием устройства,
-// поколением транспорта и номером воркера (сервер заменяет устаревшую сессию
-// того же воркера сразу, не дожидаясь таймаута).
-func requestMuxConfig(conn net.Conn, localPort, deviceID, password string, workerID int) (string, error) {
-	attempt := workerAttempt.Add(1)
-	ref := ""
-	if workerID > 0 && workerID <= 4096 {
-		ref = fmt.Sprintf("|W1:%d:%d", workerID, attempt)
-	}
-	payload := fmt.Sprintf("GETCONF:%s|%s|%s|%s|%s%s",
-		localPort, deviceID, password, muxDeviceInfo(), transportSession, ref)
+// requestMuxConfig — GETCONF с описанием устройства для панели владельца.
+//
+// Поколение транспорта и номер воркера (как у Android-клиента) намеренно не
+// отправляются: сервер WDTT Plus хранит одно поколение на пароль, и новое
+// поколение закрывает все потоки прежнего. Если тем же паролем одновременно
+// пользуются два устройства (два ПК, ПК и телефон), они бесконечно вышибали
+// бы потоки друг друга. Без поколения сервер просто добавляет поток к
+// текущему, а многопоточный режим работает по deviceID.
+func requestMuxConfig(conn net.Conn, localPort, deviceID, password string, _ int) (string, error) {
+	payload := fmt.Sprintf("GETCONF:%s|%s|%s|%s", localPort, deviceID, password, muxDeviceInfo())
 	return requestConfigPayload(conn, payload)
 }
 
